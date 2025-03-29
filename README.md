@@ -18,7 +18,7 @@ A Model Context Protocol (MCP) server that allows LLMs to interact with The Grap
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/subgraph-mcp.git
+git clone git@github.com:graphops/subgraph-mcp.git
 cd subgraph-mcp
 
 # Build the project
