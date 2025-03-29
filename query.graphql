@@ -1,0 +1,9 @@
+query SubgraphDeploymentSchema($id: String!) {
+  subgraphDeployment(id: $id) {
+    manifest {
+      schema {
+        schema
+      }
+    }
+  }
+}

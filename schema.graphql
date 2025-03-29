@@ -1,0 +1,15 @@
+type Query {
+  subgraphDeployment(id: String!): SubgraphDeployment
+}
+
+type SubgraphDeployment {
+  manifest: SubgraphManifest
+}
+
+type SubgraphManifest {
+  schema: Schema
+}
+
+type Schema {
+  schema: String
+}
