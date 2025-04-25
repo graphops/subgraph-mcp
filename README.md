@@ -6,6 +6,7 @@ A Model Context Protocol (MCP) server that allows LLMs to interact with The Grap
 
 - Get the GraphQL schema for any subgraph deployment
 - Execute GraphQL queries against any subgraph deployment
+- Find the top subgraphs for a contract address on a specific chain
 - Supports MCP resources, tools, and prompts
 
 ## Requirements
@@ -54,9 +55,11 @@ Add the server to your `claude_desktop_config.json`:
 
 After adding the configuration, restart Claude Desktop.
 
+**Important**: Claude Desktop may not automatically utilize server resources. To ensure proper functionality, manually add "The Graph" resource to your chat context by clicking on the context menu and adding the resource `graphql://subgraph`.
+
 ## Available Tools
 
-The server exposes two main tools:
+The server exposes three main tools:
 
 ### 1. get_schema
 
@@ -96,6 +99,21 @@ Run this GraphQL query against the subgraph QmYourDeploymentIdHere:
 }
 ```
 
+### 3. get_top_subgraphs
+
+Get the top subgraph deployments for a given contract address and chain, ordered by query fees.
+
+Parameters:
+
+- `contract_address`: The contract address to find indexed subgraphs for
+- `chain`: The chain name (e.g., 'mainnet' for Ethereum, 'arbitrum-one')
+
+Example usage in Claude:
+
+```
+Get the top subgraphs for contract 0x1f98431c8ad98523631ae4a59f267346ea31f984 on chain mainnet
+```
+
 ### Natural Language Queries
 
 Once connected to Claude with this MCP server, you can ask natural language questions about subgraph data without writing GraphQL queries manually:
@@ -117,16 +135,17 @@ Claude will automatically:
 
 ## Prompts
 
-The server also provides two predefined prompts:
+The server provides three predefined prompts:
 
 - `get_schema`: Get the schema for a subgraph deployment
 - `execute_query`: Run a GraphQL query against a deployment
+- `get_top_subgraphs`: Get top subgraphs for a contract on a specific chain
 
 ## Resources
 
 The server exposes one resource:
 
-- `graphql://subgraph`: Provides basic information about The Graph protocol
+- `graphql://subgraph`: Provides detailed information about how to use the Subgraph MCP, including workflow guidance for address lookups and contract queries
 
 ## Contributing
 
