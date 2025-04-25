@@ -307,19 +307,8 @@ const_string!(GetSchema = "get_schema");
 const_string!(ExecuteQuery = "execute_query");
 const_string!(GetTopSubgraphs = "get_top_subgraphs");
 
-#[tool(tool_box)]
-impl ServerHandler for SubgraphServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::V_2024_11_05,
-            capabilities: ServerCapabilities::builder()
-                .enable_prompts()
-                .enable_resources()
-                .enable_tools()
-                .build(),
-            server_info: Implementation::from_build_env(),
-            instructions: Some(
-                "This server interacts with subgraphs on The Graph protocol. \
+// Add a constant for the server instructions
+const SERVER_INSTRUCTIONS: &str = "This server interacts with subgraphs on The Graph protocol. \
 Workflow: \
 1. **Determine the user's goal:** \
     a. Is the user asking for information *about* a specific address (e.g., find ENS name for 0x...)? \
@@ -327,7 +316,7 @@ Workflow: \
 2. **Identify the chain** (IMPORTANT: use 'mainnet' for Ethereum mainnet, NOT 'ethereum'; use 'arbitrum-one' for Arbitrum, etc.). \
 3. **If Goal is (a) - Address Lookup (e.g., ENS):** \
     a. Identify the relevant **protocol** (e.g., ENS). \
-    b. Find the **protocol's main contract address** on the identified chain. You might need to search for this. \
+    b. Find the **protocol's main contract address** on the identified chain. For The Graph protocol contracts, refer to https://thegraph.com/docs/en/contracts/ and default to using Arbitrum addresses as this is the principal deployment. \
     c. Use 'get_top_subgraphs' with the **protocol's contract address** and chain to find relevant deployment IDs. \
     d. Use the obtained deployment ID(s) with 'execute_query'. The query should use the **original user-provided address** (from 1a) in its variables or filters to find the specific information (e.g., the ENS name). \
 4. **If Goal is (b) - Find Subgraphs for a Contract:** \
@@ -341,15 +330,28 @@ Workflow: \
 **Important:** \
 *   For `get_top_subgraphs`, the `contractAddress` parameter *must* be the address of the contract you want to find indexed subgraphs for. This is different from an address you might be looking up information *about* within a subgraph (like an EOA for an ENS lookup). \
 *   Chain parameter must be 'mainnet' for Ethereum mainnet, not 'ethereum'. \
+*   The Graph protocol has migrated to Arbitrum One, which now hosts the principal deployment. When working with The Graph protocol directly, refer to https://thegraph.com/docs/en/contracts/ and use Arbitrum contract addresses by default unless specifically requested otherwise. \
+*   When asked to provide ENS names for any address, always rely on the ENS contracts and subgraphs. \
 *   Never use hardcoded deployment IDs from memory. ALWAYS use `get_top_subgraphs` first to discover current valid deployment IDs. \
 *   If a query fails, check the chain parameter and try again with the correct chain name before attempting other approaches. \
 *   Clean query structure: Keep GraphQL queries simple with only necessary fields, omit the variables parameter when not needed, and use a clear, minimal query structure. \
 *   Protocol version awareness: When querying blockchain protocol data (like Uniswap, Aave, Compound, etc.), prioritize the latest major version unless specified otherwise. If unsure which version to query, explain the different versions and their key differences before proceeding. \
 *   Contract address verification: When accessing blockchain protocol data through subgraphs, verify that the contract address corresponds to the intended protocol by checking the schema before proceeding with further queries. If the schema indicates a different protocol than expected, notify the user and suggest the correct address. \
 *   Clarification thresholds: When a query about blockchain data lacks specificity (protocol version, timeframe, metrics of interest), request clarification if the potential interpretations would lead to significantly different results or if retrieving all possible interpretations would be inefficient. \
-*   Context inference: For blockchain data queries, infer context from recent protocol developments. For instance, if a user asks about 'Uniswap pairs' without specifying a version, consider that V3 has largely superseded V2 in terms of volume and liquidity, but include both if the complete picture is valuable."
-                    .to_string(),
-            ),
+*   Context inference: For blockchain data queries, infer context from recent protocol developments. For instance, if a user asks about 'Uniswap pairs' without specifying a version, consider that V3 has largely superseded V2 in terms of volume and liquidity, but include both if the complete picture is valuable.";
+
+#[tool(tool_box)]
+impl ServerHandler for SubgraphServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo {
+            protocol_version: ProtocolVersion::V_2024_11_05,
+            capabilities: ServerCapabilities::builder()
+                .enable_prompts()
+                .enable_resources()
+                .enable_tools()
+                .build(),
+            server_info: Implementation::from_build_env(),
+            instructions: Some(SERVER_INSTRUCTIONS.to_string()),
         }
     }
 
@@ -364,7 +366,6 @@ Workflow: \
         })
     }
 
-    // dummy resource
     async fn read_resource(
         &self,
         ReadResourceRequestParam { uri }: ReadResourceRequestParam,
@@ -372,35 +373,7 @@ Workflow: \
     ) -> Result<ReadResourceResult, McpError> {
         match uri.as_str() {
             "graphql://subgraph" => {
-                let description = "This server interacts with subgraphs on The Graph protocol. \
-Workflow: \
-1. **Determine the user's goal:** \
-    a. Is the user asking for information *about* a specific address (e.g., find ENS name for 0x...)? \
-    b. Is the user asking for subgraphs that index a specific *contract address* they provided? \
-2. **Identify the chain** (IMPORTANT: use 'mainnet' for Ethereum mainnet, NOT 'ethereum'; use 'arbitrum-one' for Arbitrum, etc.). \
-3. **If Goal is (a) - Address Lookup (e.g., ENS):** \
-    a. Identify the relevant **protocol** (e.g., ENS). \
-    b. Find the **protocol's main contract address** on the identified chain. You might need to search for this. \
-    c. Use 'get_top_subgraphs' with the **protocol's contract address** and chain to find relevant deployment IDs. \
-    d. Use the obtained deployment ID(s) with 'execute_query'. The query should use the **original user-provided address** (from 1a) in its variables or filters to find the specific information (e.g., the ENS name). \
-4. **If Goal is (b) - Find Subgraphs for a Contract:** \
-    a. Use the **contract address provided by the user** (from 1b). \
-    b. Use 'get_top_subgraphs' with this **user-provided contract address** and the identified chain to find relevant deployment IDs. \
-    c. Use the obtained deployment ID(s) with 'get_schema' or 'execute_query' as needed. \
-5. **Write clean GraphQL queries:** \
-    a. Omit the 'variables' parameter when not needed. \
-    b. Create simple GraphQL structures without unnecessary complexity. \
-    c. Include only the essential fields in your query. \
-**Important:** \
-*   For `get_top_subgraphs`, the `contractAddress` parameter *must* be the address of the contract you want to find indexed subgraphs for. This is different from an address you might be looking up information *about* within a subgraph (like an EOA for an ENS lookup). \
-*   Chain parameter must be 'mainnet' for Ethereum mainnet, not 'ethereum'. \
-*   Never use hardcoded deployment IDs from memory. ALWAYS use `get_top_subgraphs` first to discover current valid deployment IDs. \
-*   If a query fails, check the chain parameter and try again with the correct chain name before attempting other approaches. \
-*   Clean query structure: Keep GraphQL queries simple with only necessary fields, omit the variables parameter when not needed, and use a clear, minimal query structure. \
-*   Protocol version awareness: When querying blockchain protocol data (like Uniswap, Aave, Compound, etc.), prioritize the latest major version unless specified otherwise. If unsure which version to query, explain the different versions and their key differences before proceeding. \
-*   Contract address verification: When accessing blockchain protocol data through subgraphs, verify that the contract address corresponds to the intended protocol by checking the schema before proceeding with further queries. If the schema indicates a different protocol than expected, notify the user and suggest the correct address. \
-*   Clarification thresholds: When a query about blockchain data lacks specificity (protocol version, timeframe, metrics of interest), request clarification if the potential interpretations would lead to significantly different results or if retrieving all possible interpretations would be inefficient. \
-*   Context inference: For blockchain data queries, infer context from recent protocol developments. For instance, if a user asks about 'Uniswap pairs' without specifying a version, consider that V3 has largely superseded V2 in terms of volume and liquidity, but include both if the complete picture is valuable.";
+                let description = SERVER_INSTRUCTIONS;
                 Ok(ReadResourceResult {
                     contents: vec![ResourceContents::text(description, uri)],
                 })
