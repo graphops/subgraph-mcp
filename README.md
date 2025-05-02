@@ -32,7 +32,7 @@ cargo build --release
 
 #### Configuration with Claude Desktop
 
-Add the server to your `claude_desktop_config.json`:
+Add the server to your `config.json` file, for example on Mac it is located under '/Users/<your-user>/Library/Application Support/Claude':
 
 ```json
 {
@@ -47,6 +47,24 @@ Add the server to your `claude_desktop_config.json`:
   }
 }
 ```
+
+Make sure the new file it's a valid JSON file. 
+If you have a default Claude installation, it will look like:
+
+{
+  "darkMode": "light",
+  "scale": 0,
+  "locale": "en-US",
+  "mcpServers": {
+    "subgraph": {
+      "command": "/path/to/subgraph-mcp",
+      "env": {
+        "GATEWAY_API_KEY": "your-api-key-here",
+        "GATEWAY_URL": "gateway-url-here"
+      }
+    }
+  }
+}
 
 After adding the configuration, restart Claude Desktop.
 
