@@ -41,6 +41,7 @@ Add the server to your `claude_desktop_config.json`:
       "command": "/path/to/subgraph-mcp",
       "env": {
         "GATEWAY_API_KEY": "your-api-key-here"
+        "GATEWAY_URL": "gateway-url-here"
       }
     }
   }
