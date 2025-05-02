@@ -1,6 +1,6 @@
 # Subgraph MCP Server
 
-A Model Context Protocol (MCP) server that allows LLMs to interact with The Graph protocol's subgraphs through GraphOps Gateway.
+A Model Context Protocol (MCP) server that allows LLMs to interact with Subgraphs available on The Graph Network.
 
 ## Features
 
