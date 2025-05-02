@@ -12,7 +12,7 @@ A Model Context Protocol (MCP) server that allows LLMs to interact with The Grap
 ## Requirements
 
 - Rust (latest stable version recommended: 1.75+)
-- A GraphOps API key
+- A Gateway API key
 - For Claude Desktop users: Latest Claude Desktop version
 
 ## Installation
@@ -40,7 +40,7 @@ Add the server to your `claude_desktop_config.json`:
     "subgraph": {
       "command": "/path/to/subgraph-mcp",
       "env": {
-        "GRAPHOPS_API_KEY": "your-api-key-here"
+        "GATEWAY_API_KEY": "your-api-key-here"
       }
     }
   }
