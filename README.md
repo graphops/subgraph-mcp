@@ -48,6 +48,9 @@ Add the server to your `claude_desktop_config.json`:
 }
 ```
 
+For the GATEWAY_URL you can specify 'https://gateway.thegraph.com/api':
+"GATEWAY_URL": "https://gateway.thegraph.com/api"
+
 After adding the configuration, restart Claude Desktop.
 
 **Important**: Claude Desktop may not automatically utilize server resources. To ensure proper functionality, manually add "The Graph" resource to your chat context by clicking on the context menu and adding the resource `graphql://subgraph`.
