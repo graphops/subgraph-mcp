@@ -7,10 +7,58 @@ use thiserror::Error;
 use tokio::io;
 
 use rmcp::{
-    const_string, model::*, schemars, service::RequestContext, tool, Error as McpError, RoleServer,
-    ServerHandler,
+    model::*, schemars, service::RequestContext, tool, Error as McpError, RoleServer, ServerHandler,
 };
 use serde_json::json;
+
+const GRAPHOPS_GATEWAY_URL: &str = "https://graph-gateway.graphops.xyz/api";
+const GRAPH_NETWORK_SUBGRAPH_ARBITRUM: &str = "QmdKXcBUHR3UyURqVRQHu1oV6VUkBrhi2vNvMx3bNDnUCc";
+const SERVER_INSTRUCTIONS: &str = "This server interacts with subgraphs on The Graph protocol. \
+Workflow: \
+1. **Determine the user's goal:** \
+    a. Is the user asking for information *about* a specific address (e.g., find ENS name for 0x...)? \
+    b. Is the user asking for subgraphs that index a specific *contract address* they provided? \
+    c. Is the user trying to query a subgraph using a *subgraph ID* (e.g., 5zvR82...), *deployment ID* (e.g., 0x...), or *IPFS hash* (e.g., Qm...)? \
+    d. Is the user asking for the *schema* of a subgraph using one of the above identifiers? \
+2. **Identify the chain** (IMPORTANT: use 'mainnet' for Ethereum mainnet, NOT 'ethereum'; use 'arbitrum-one' for Arbitrum, etc.). This is needed for `get_top_subgraph_deployments`. \
+3. **If Goal is (a) - Address Lookup (e.g., ENS):** \
+    a. Identify the relevant **protocol** (e.g., ENS). \
+    b. Find the **protocol's main contract address** on the identified chain. For The Graph protocol contracts, refer to https://thegraph.com/docs/en/contracts/ and default to using Arbitrum addresses as this is the principal deployment. \
+    c. Use `get_top_subgraph_deployments` with the **protocol's contract address** and chain to find relevant deployment IDs. \
+    d. Use the obtained deployment ID(s) with `execute_query_by_deployment_id`. The query should use the **original user-provided address** (from 1a) in its variables or filters to find the specific information (e.g., the ENS name). \
+4. **If Goal is (b) - Find Subgraphs for a Contract:** \
+    a. Use the **contract address provided by the user** (from 1b). \
+    b. Use `get_top_subgraph_deployments` with this **user-provided contract address** and the identified chain to find relevant deployment IDs. \
+    c. Use the obtained deployment ID(s) with `get_schema_by_deployment_id` or `execute_query_by_deployment_id` as needed. \
+5. **If Goal is (c) - Query by Subgraph/Deployment ID/IPFS Hash:** \
+    a. Identify the type of identifier provided: **subgraph ID** (often alphanumeric, like 5zvR82...), **deployment ID** (starts with `0x...`), or **IPFS hash** (starts with `Qm...`). \
+    b. If it's a **subgraph ID**, use `execute_query_by_subgraph_id`. This targets the *latest* deployment associated with that subgraph ID. \
+    c. If it's a **deployment ID** or **IPFS hash**, use `execute_query_by_deployment_id`. This targets the *specific, immutable* deployment corresponding to that ID/hash. \
+6. **If Goal is (d) - Get Schema:** \
+    a. Identify the type of identifier provided: **subgraph ID** (e.g., 5zvR82...), **deployment ID** (e.g., 0x...), or **IPFS hash** (e.g., Qm...). \
+    b. If it's a **subgraph ID**, use `get_schema_by_subgraph_id` to get the schema of the *current* deployment for that subgraph. \
+    c. If it's a **deployment ID**, use `get_schema_by_deployment_id`. \
+    d. If it's an **IPFS hash**, use `get_schema_by_ipfs_hash`. \
+7. **Write clean GraphQL queries:** \
+    a. Omit the 'variables' parameter when not needed. \
+    b. Create simple GraphQL structures without unnecessary complexity. \
+    c. Include only the essential fields in your query. \
+**Important:** \
+*   Distinguish carefully between identifier types: \
+    *   **Subgraph ID** (e.g., `5zvR82...`): Logical identifier for a subgraph. Use `execute_query_by_subgraph_id` (queries latest deployment) or `get_schema_by_subgraph_id` (gets schema of latest deployment). \
+    *   **Deployment ID** (e.g., `0x4d7c...`): Identifier for a specific, immutable deployment. Use `execute_query_by_deployment_id` or `get_schema_by_deployment_id`. \
+    *   **IPFS Hash** (e.g., `QmTZ8e...`): Identifier for the manifest of a specific, immutable deployment. Use `execute_query_by_deployment_id` (the gateway treats it like a deployment ID for querying) or `get_schema_by_ipfs_hash`. \
+*   For `get_top_subgraph_deployments`, the `contractAddress` parameter *must* be the address of the contract you want to find indexed subgraphs for. \
+*   Chain parameter for `get_top_subgraph_deployments` must be 'mainnet' for Ethereum mainnet, not 'ethereum'. \
+*   The Graph protocol has migrated to Arbitrum One. When working with The Graph protocol directly, refer to https://thegraph.com/docs/en/contracts/ and use Arbitrum contract addresses by default unless specifically requested otherwise. \
+*   When asked to provide ENS names for any address, always rely on the ENS contracts and subgraphs. \
+*   Never use hardcoded deployment IDs/hashes/subgraph IDs from memory unless provided directly by the user. Use `get_top_subgraph_deployments` first to discover relevant deployments if needed. \
+*   If a query or schema fetch fails, double-check that the correct tool was used for the given identifier type (subgraph ID vs. deployment ID vs. IPFS hash) and that the identifier itself is correct. \
+*   Clean query structure: Keep GraphQL queries simple with only necessary fields, omit the variables parameter when not needed, and use a clear, minimal query structure. \
+*   Protocol version awareness: When querying blockchain protocol data (like Uniswap, Aave, Compound, etc.), prioritize the latest major version unless specified otherwise. \
+*   Contract address verification: When accessing blockchain protocol data through subgraphs found via `get_top_subgraph_deployments`, verify that the contract address corresponds to the intended protocol by checking the schema before proceeding with further queries. \
+*   Clarification thresholds: When a query about blockchain data lacks specificity (protocol version, timeframe, metrics of interest), request clarification if the potential interpretations would lead to significantly different results. \
+*   Context inference: For blockchain data queries, infer context from recent protocol developments (e.g., default to Uniswap V3 over V2 if unspecified). ";
 
 #[derive(Debug, Error)]
 enum SubgraphError {
@@ -26,20 +74,48 @@ enum SubgraphError {
 
 // GraphQL request structures
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-pub struct GetSchemaRequest {
+pub struct GetSchemaByDeploymentIdRequest {
+    #[schemars(description = "The deployment ID (e.g., 0x...) of the specific deployment")]
     pub deployment_id: String,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-pub struct ExecuteQueryRequest {
+pub struct GetSchemaBySubgraphIdRequest {
+    #[schemars(description = "The subgraph ID (e.g., 5zvR82...) to get the current schema for")]
+    pub subgraph_id: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetSchemaByIpfsHashRequest {
+    #[schemars(description = "The IPFS hash (e.g., Qm...) of the specific deployment")]
+    pub ipfs_hash: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct ExecuteQueryByDeploymentIdRequest {
+    #[schemars(description = "The deployment ID or IPFS hash of the specific subgraph deployment")]
     pub deployment_id: String,
+    #[schemars(description = "The GraphQL query string")]
     pub query: String,
+    #[schemars(description = "Optional JSON value for GraphQL variables")]
     pub variables: Option<serde_json::Value>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-pub struct GetTopSubgraphsRequest {
+pub struct ExecuteQueryBySubgraphIdRequest {
+    #[schemars(description = "The ID of the subgraph (resolves to the latest deployment)")]
+    pub subgraph_id: String,
+    #[schemars(description = "The GraphQL query string")]
+    pub query: String,
+    #[schemars(description = "Optional JSON value for GraphQL variables")]
+    pub variables: Option<serde_json::Value>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetTopSubgraphDeploymentsRequest {
+    #[schemars(description = "The contract address to find subgraph deployments for")]
     pub contract_address: String,
+    #[schemars(description = "The chain name (e.g., 'mainnet', 'arbitrum-one')")]
     pub chain: String,
 }
 
@@ -53,8 +129,6 @@ struct GraphQLResponse {
 struct GraphQLError {
     message: String,
 }
-
-// Constants for protocol versions
 
 #[derive(Clone)]
 pub struct SubgraphServer {
@@ -78,11 +152,14 @@ impl SubgraphServer {
         env::var("GRAPHOPS_API_KEY").map_err(|_| SubgraphError::ApiKeyNotSet)
     }
 
-    async fn get_schema_internal(&self, deployment_id: &str) -> Result<String, SubgraphError> {
+    async fn get_schema_by_deployment_id_internal(
+        &self,
+        deployment_id: &str,
+    ) -> Result<String, SubgraphError> {
         let api_key = self.get_api_key()?;
         let url = format!(
-            "https://graph-gateway.graphops.xyz/api/{}/deployments/id/{}",
-            api_key, "QmdKXcBUHR3UyURqVRQHu1oV6VUkBrhi2vNvMx3bNDnUCc"
+            "{} {} {}",
+            GRAPHOPS_GATEWAY_URL, api_key, "GRAPH_NETWORK_SUBGRAPH_ARBITRUM"
         );
 
         let query = r#"
@@ -138,16 +215,142 @@ impl SubgraphServer {
         Ok(schema.to_string())
     }
 
-    async fn execute_query_internal(
+    async fn get_schema_by_subgraph_id_internal(
         &self,
-        deployment_id: &str,
+        subgraph_id: &str,
+    ) -> Result<String, SubgraphError> {
+        let api_key = self.get_api_key()?;
+        let url = format!(
+            "{}/{}/deployments/id/{}",
+            GRAPHOPS_GATEWAY_URL, api_key, GRAPH_NETWORK_SUBGRAPH_ARBITRUM
+        );
+
+        let query = r#"
+        query SubgraphSchema($id: String!) {
+          subgraph(id: $id) {
+            currentVersion {
+              subgraphDeployment {
+                manifest {
+                  schema {
+                    schema
+                  }
+                }
+              }
+            }
+          }
+        }
+        "#;
+
+        let variables = serde_json::json!({ "id": subgraph_id });
+        let request_body = serde_json::json!({ "query": query, "variables": variables });
+
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&request_body)
+            .send()
+            .await?
+            .json::<GraphQLResponse>()
+            .await?;
+
+        if let Some(errors) = response.errors {
+            if !errors.is_empty() {
+                return Err(SubgraphError::GraphQlError(errors[0].message.clone()));
+            }
+        }
+
+        let data = response.data.ok_or_else(|| {
+            SubgraphError::GraphQlError("No data returned from the GraphQL API".to_string())
+        })?;
+
+        let schema = data
+            .get("subgraph")
+            .and_then(|sg| sg.get("currentVersion"))
+            .and_then(|cv| cv.get("subgraphDeployment"))
+            .and_then(|dep| dep.get("manifest"))
+            .and_then(|manifest| manifest.get("schema"))
+            .and_then(|schema| schema.get("schema"))
+            .and_then(|schema| schema.as_str())
+            .ok_or_else(|| {
+                SubgraphError::GraphQlError(
+                    "Schema not found for current version in the response".to_string(),
+                )
+            })?;
+
+        Ok(schema.to_string())
+    }
+
+    async fn get_schema_by_ipfs_hash_internal(
+        &self,
+        ipfs_hash: &str,
+    ) -> Result<String, SubgraphError> {
+        let api_key = self.get_api_key()?;
+        let url = format!(
+            "{}/{}/deployments/id/{}",
+            GRAPHOPS_GATEWAY_URL, api_key, GRAPH_NETWORK_SUBGRAPH_ARBITRUM
+        );
+
+        let query = r#"
+        query DeploymentSchemaByIpfsHash($hash: String!) {
+          subgraphDeployments(where: {ipfsHash: $hash}, first: 1) {
+            manifest {
+              schema {
+                schema
+              }
+            }
+          }
+        }
+        "#;
+
+        let variables = serde_json::json!({ "hash": ipfs_hash });
+        let request_body = serde_json::json!({ "query": query, "variables": variables });
+
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&request_body)
+            .send()
+            .await?
+            .json::<GraphQLResponse>()
+            .await?;
+
+        if let Some(errors) = response.errors {
+            if !errors.is_empty() {
+                return Err(SubgraphError::GraphQlError(errors[0].message.clone()));
+            }
+        }
+
+        let data = response.data.ok_or_else(|| {
+            SubgraphError::GraphQlError("No data returned from the GraphQL API".to_string())
+        })?;
+
+        let schema = data
+            .get("subgraphDeployments")
+            .and_then(|deployments| deployments.get(0))
+            .and_then(|dep| dep.get("manifest"))
+            .and_then(|manifest| manifest.get("schema"))
+            .and_then(|schema| schema.get("schema"))
+            .and_then(|schema| schema.as_str())
+            .ok_or_else(|| {
+                SubgraphError::GraphQlError(
+                    "Schema not found for the given IPFS hash in the response".to_string(),
+                )
+            })?;
+
+        Ok(schema.to_string())
+    }
+
+    async fn execute_query_on_endpoint(
+        &self,
+        endpoint_type: &str,
+        id: &str,
         query: &str,
         variables: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, SubgraphError> {
         let api_key = self.get_api_key()?;
         let url = format!(
-            "https://graph-gateway.graphops.xyz/api/{}/deployments/id/{}",
-            api_key, deployment_id
+            "{}/{}/{}/{}",
+            GRAPHOPS_GATEWAY_URL, api_key, endpoint_type, id
         );
 
         let mut request_body = serde_json::json!({
@@ -170,20 +373,19 @@ impl SubgraphServer {
         Ok(response)
     }
 
-    async fn get_top_subgraphs_internal(
+    async fn get_top_subgraph_deployments_internal(
         &self,
         contract_address: &str,
         chain: &str,
     ) -> Result<serde_json::Value, SubgraphError> {
         let api_key = self.get_api_key()?;
-        // Use the general GraphOps gateway endpoint for indexer queries
         let url = format!(
-            "https://graph-gateway.graphops.xyz/api/{}/deployments/id/{}",
-            api_key, "QmdKXcBUHR3UyURqVRQHu1oV6VUkBrhi2vNvMx3bNDnUCc"
+            "{}/{}/deployments/id/{}",
+            GRAPHOPS_GATEWAY_URL, api_key, GRAPH_NETWORK_SUBGRAPH_ARBITRUM
         );
 
         let query = r#"
-        query TopSubgraphsForContract($network: String!, $contractAddress: String!) {
+        query TopSubgraphDeploymentsForContract($network: String!, $contractAddress: String!) {
           subgraphDeployments(
             where: {manifest_: {network: $network, manifest_contains: $contractAddress}}
             orderBy: queryFeesAmount
@@ -215,7 +417,7 @@ impl SubgraphServer {
             .json(&request_body)
             .send()
             .await?
-            .json::<GraphQLResponse>() // Expecting GraphQLResponse structure
+            .json::<GraphQLResponse>()
             .await?;
 
         if let Some(errors) = response.errors {
@@ -235,33 +437,69 @@ impl SubgraphServer {
         RawResource::new(uri, name.to_string()).no_annotation()
     }
 
-    #[tool(description = "Get schema for a subgraph deployment")]
-    async fn get_schema(
+    #[tool(
+        description = "Get schema for a specific subgraph deployment using its deployment ID (0x...)."
+    )]
+    async fn get_schema_by_deployment_id(
         &self,
-        #[tool(param)]
-        #[schemars(description = "The ID of the subgraph deployment")]
-        deployment_id: String,
+        #[tool(aggr)]
+        GetSchemaByDeploymentIdRequest { deployment_id }: GetSchemaByDeploymentIdRequest,
     ) -> Result<CallToolResult, McpError> {
-        match self.get_schema_internal(&deployment_id).await {
+        match self
+            .get_schema_by_deployment_id_internal(&deployment_id)
+            .await
+        {
             Ok(schema) => Ok(CallToolResult::success(vec![Content::text(schema)])),
             Err(e) => Err(McpError::internal_error(
-                "Failed to get schema",
+                "Failed to get schema by deployment ID",
                 Some(json!({ "error": e.to_string() })),
             )),
         }
     }
 
-    #[tool(description = "Execute a GraphQL query against a deployment")]
-    async fn execute_query(
+    #[tool(
+        description = "Get the schema for the current version of a subgraph using its subgraph ID (e.g., 5zvR82...)."
+    )]
+    async fn get_schema_by_subgraph_id(
         &self,
-        #[tool(aggr)] ExecuteQueryRequest {
+        #[tool(aggr)] GetSchemaBySubgraphIdRequest { subgraph_id }: GetSchemaBySubgraphIdRequest,
+    ) -> Result<CallToolResult, McpError> {
+        match self.get_schema_by_subgraph_id_internal(&subgraph_id).await {
+            Ok(schema) => Ok(CallToolResult::success(vec![Content::text(schema)])),
+            Err(e) => Err(McpError::internal_error(
+                "Failed to get schema by subgraph ID",
+                Some(json!({ "error": e.to_string() })),
+            )),
+        }
+    }
+
+    #[tool(
+        description = "Get schema for a specific subgraph deployment using its IPFS hash (Qm...)."
+    )]
+    async fn get_schema_by_ipfs_hash(
+        &self,
+        #[tool(aggr)] GetSchemaByIpfsHashRequest { ipfs_hash }: GetSchemaByIpfsHashRequest,
+    ) -> Result<CallToolResult, McpError> {
+        match self.get_schema_by_ipfs_hash_internal(&ipfs_hash).await {
+            Ok(schema) => Ok(CallToolResult::success(vec![Content::text(schema)])),
+            Err(e) => Err(McpError::internal_error(
+                "Failed to get schema by IPFS hash",
+                Some(json!({ "error": e.to_string() })),
+            )),
+        }
+    }
+
+    #[tool(description = "Execute a GraphQL query against a specific deployment ID or IPFS hash.")]
+    async fn execute_query_by_deployment_id(
+        &self,
+        #[tool(aggr)] ExecuteQueryByDeploymentIdRequest {
             deployment_id,
             query,
             variables,
-        }: ExecuteQueryRequest,
+        }: ExecuteQueryByDeploymentIdRequest,
     ) -> Result<CallToolResult, McpError> {
         match self
-            .execute_query_internal(&deployment_id, &query, variables)
+            .execute_query_on_endpoint("deployments/id", &deployment_id, &query, variables)
             .await
         {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
@@ -269,7 +507,31 @@ impl SubgraphServer {
                 result
             ))])),
             Err(e) => Err(McpError::internal_error(
-                "Failed to execute query",
+                "Failed to execute query by deployment ID",
+                Some(json!({ "error": e.to_string() })),
+            )),
+        }
+    }
+
+    #[tool(description = "Execute a GraphQL query against the latest deployment of a subgraph ID.")]
+    async fn execute_query_by_subgraph_id(
+        &self,
+        #[tool(aggr)] ExecuteQueryBySubgraphIdRequest {
+            subgraph_id,
+            query,
+            variables,
+        }: ExecuteQueryBySubgraphIdRequest,
+    ) -> Result<CallToolResult, McpError> {
+        match self
+            .execute_query_on_endpoint("subgraphs/id", &subgraph_id, &query, variables)
+            .await
+        {
+            Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "{:#}",
+                result
+            ))])),
+            Err(e) => Err(McpError::internal_error(
+                "Failed to execute query by subgraph ID",
                 Some(json!({ "error": e.to_string() })),
             )),
         }
@@ -278,67 +540,30 @@ impl SubgraphServer {
     #[tool(
         description = "Get the top 3 subgraph deployments for a given contract address and chain, ordered by query fees. For chain, use 'mainnet' for Ethereum mainnet, NEVER use 'ethereum'."
     )]
-    async fn get_top_subgraphs(
+    async fn get_top_subgraph_deployments(
         &self,
         #[tool(aggr)]
         #[schemars(description = "Request containing the contract address and chain name")]
-        GetTopSubgraphsRequest {
+        GetTopSubgraphDeploymentsRequest {
             contract_address,
             chain,
-        }: GetTopSubgraphsRequest,
+        }: GetTopSubgraphDeploymentsRequest,
     ) -> Result<CallToolResult, McpError> {
         match self
-            .get_top_subgraphs_internal(&contract_address, &chain)
+            .get_top_subgraph_deployments_internal(&contract_address, &chain)
             .await
         {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
-                "{:#}", // Pretty print the JSON result
+                "{:#}",
                 result
             ))])),
             Err(e) => Err(McpError::internal_error(
-                "Failed to get top subgraphs",
+                "Failed to get top subgraph deployments",
                 Some(json!({ "error": e.to_string() })),
             )),
         }
     }
 }
-
-const_string!(GetSchema = "get_schema");
-const_string!(ExecuteQuery = "execute_query");
-const_string!(GetTopSubgraphs = "get_top_subgraphs");
-
-// Add a constant for the server instructions
-const SERVER_INSTRUCTIONS: &str = "This server interacts with subgraphs on The Graph protocol. \
-Workflow: \
-1. **Determine the user's goal:** \
-    a. Is the user asking for information *about* a specific address (e.g., find ENS name for 0x...)? \
-    b. Is the user asking for subgraphs that index a specific *contract address* they provided? \
-2. **Identify the chain** (IMPORTANT: use 'mainnet' for Ethereum mainnet, NOT 'ethereum'; use 'arbitrum-one' for Arbitrum, etc.). \
-3. **If Goal is (a) - Address Lookup (e.g., ENS):** \
-    a. Identify the relevant **protocol** (e.g., ENS). \
-    b. Find the **protocol's main contract address** on the identified chain. For The Graph protocol contracts, refer to https://thegraph.com/docs/en/contracts/ and default to using Arbitrum addresses as this is the principal deployment. \
-    c. Use 'get_top_subgraphs' with the **protocol's contract address** and chain to find relevant deployment IDs. \
-    d. Use the obtained deployment ID(s) with 'execute_query'. The query should use the **original user-provided address** (from 1a) in its variables or filters to find the specific information (e.g., the ENS name). \
-4. **If Goal is (b) - Find Subgraphs for a Contract:** \
-    a. Use the **contract address provided by the user** (from 1b). \
-    b. Use 'get_top_subgraphs' with this **user-provided contract address** and the identified chain to find relevant deployment IDs. \
-    c. Use the obtained deployment ID(s) with 'get_schema' or 'execute_query' as needed. \
-5. **Write clean GraphQL queries:** \
-    a. Omit the 'variables' parameter when not needed. \
-    b. Create simple GraphQL structures without unnecessary complexity. \
-    c. Include only the essential fields in your query. \
-**Important:** \
-*   For `get_top_subgraphs`, the `contractAddress` parameter *must* be the address of the contract you want to find indexed subgraphs for. This is different from an address you might be looking up information *about* within a subgraph (like an EOA for an ENS lookup). \
-*   Chain parameter must be 'mainnet' for Ethereum mainnet, not 'ethereum'. \
-*   The Graph protocol has migrated to Arbitrum One, which now hosts the principal deployment. When working with The Graph protocol directly, refer to https://thegraph.com/docs/en/contracts/ and use Arbitrum contract addresses by default unless specifically requested otherwise. \
-*   When asked to provide ENS names for any address, always rely on the ENS contracts and subgraphs. \
-*   Never use hardcoded deployment IDs from memory. ALWAYS use `get_top_subgraphs` first to discover current valid deployment IDs. \
-*   If a query fails, check the chain parameter and try again with the correct chain name before attempting other approaches. \
-*   Clean query structure: Keep GraphQL queries simple with only necessary fields, omit the variables parameter when not needed, and use a clear, minimal query structure. \
-*   Protocol version awareness: When querying blockchain protocol data (like Uniswap, Aave, Compound, etc.), prioritize the latest major version unless specified otherwise. If unsure which version to query, explain the different versions and their key differences before proceeding. \
-*   Contract address verification: When accessing blockchain protocol data through subgraphs, verify that the contract address corresponds to the intended protocol by checking the schema before proceeding with further queries. If the schema indicates a different protocol than expected, notify the user and suggest the correct address. \
-*   Clarification thresholds: When a query about blockchain data lacks specificity (protocol version, timeframe, metrics of interest), request clarification if the potential interpretations would lead to significantly different results or if retrieving all possible interpretations would be inefficient. \
-*   Context inference: For blockchain data queries, infer context from recent protocol developments. For instance, if a user asks about 'Uniswap pairs' without specifying a version, consider that V3 has largely superseded V2 in terms of volume and liquidity, but include both if the complete picture is valuable.";
 
 #[tool(tool_box)]
 impl ServerHandler for SubgraphServer {
@@ -396,8 +621,8 @@ impl ServerHandler for SubgraphServer {
             next_cursor: None,
             prompts: vec![
                 Prompt::new(
-                    "get_schema",
-                    Some("Get subgraph schema."),
+                    "get_schema_by_deployment_id",
+                    Some("Get schema for a specific subgraph deployment using its deployment ID (0x...)."),
                     Some(vec![PromptArgument {
                         name: "deploymentId".to_string(),
                         description: Some("The ID of the subgraph deployment".to_string()),
@@ -405,12 +630,15 @@ impl ServerHandler for SubgraphServer {
                     }]),
                 ),
                 Prompt::new(
-                    "execute_query",
-                    Some("Execute GraphQL query."),
+                    "execute_query_by_deployment_id",
+                    Some("Execute GraphQL query against a specific deployment ID/hash."),
                     Some(vec![
                         PromptArgument {
                             name: "deploymentId".to_string(),
-                            description: Some("The ID of the subgraph deployment".to_string()),
+                            description: Some(
+                                "The specific deployment ID (e.g., 0x...) or IPFS hash (e.g., Qm...)"
+                                    .to_string(),
+                            ),
                             required: Some(true),
                         },
                         PromptArgument {
@@ -426,8 +654,37 @@ impl ServerHandler for SubgraphServer {
                     ]),
                 ),
                 Prompt::new(
-                    "get_top_subgraphs",
-                    Some("Get top subgraphs for a contract."),
+                    "get_schema_by_subgraph_id",
+                    Some("Get the schema for the current version of a subgraph using its subgraph ID (e.g., 5zvR82...)."
+                    ),
+                    Some(vec![
+                        PromptArgument {
+                            name: "subgraphId".to_string(),
+                            description: Some(
+                                "The subgraph ID (e.g., 5zvR82...) to get the current schema for"
+                                    .to_string(),
+                            ),
+                            required: Some(true),
+                        },
+                    ]),
+                ),
+                Prompt::new(
+                    "get_schema_by_ipfs_hash",
+                    Some("Get schema for a specific subgraph deployment using its IPFS hash (Qm...)."),
+                    Some(vec![
+                        PromptArgument {
+                            name: "ipfsHash".to_string(),
+                            description: Some(
+                                "The IPFS hash (e.g., Qm...) of the specific deployment"
+                                    .to_string(),
+                            ),
+                            required: Some(true),
+                        },
+                    ]),
+                ),
+                Prompt::new(
+                    "get_top_subgraph_deployments",
+                    Some("Get top subgraph deployments for a contract."),
                     Some(vec![
                         PromptArgument {
                             name: "contractAddress".to_string(),
@@ -454,7 +711,7 @@ impl ServerHandler for SubgraphServer {
         _: RequestContext<RoleServer>,
     ) -> Result<GetPromptResult, McpError> {
         match name.as_str() {
-            "get_schema" => {
+            "get_schema_by_deployment_id" => {
                 let deployment_id = arguments
                     .as_ref()
                     .and_then(|args| args.get("deploymentId"))
@@ -475,7 +732,7 @@ impl ServerHandler for SubgraphServer {
                     }],
                 })
             }
-            "execute_query" => {
+            "execute_query_by_deployment_id" => {
                 let deployment_id = arguments
                     .as_ref()
                     .and_then(|args| args.get("deploymentId"))
@@ -497,13 +754,57 @@ impl ServerHandler for SubgraphServer {
                     messages: vec![PromptMessage {
                         role: PromptMessageRole::User,
                         content: PromptMessageContent::text(format!(
-                            "Run this GraphQL query against deployment {}: {}",
+                            "Run this GraphQL query against deployment ID/hash {}: {}",
                             deployment_id, query
                         )),
                     }],
                 })
             }
-            "get_top_subgraphs" => {
+            "get_schema_by_subgraph_id" => {
+                let subgraph_id = arguments
+                    .as_ref()
+                    .and_then(|args| args.get("subgraphId"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("{subgraphId}")
+                    .to_string();
+
+                Ok(GetPromptResult {
+                    description: Some(
+                        "Fetch the schema for the current version of a subgraph using its subgraph ID."
+                            .to_string(),
+                    ),
+                    messages: vec![PromptMessage {
+                        role: PromptMessageRole::User,
+                        content: PromptMessageContent::text(format!(
+                            "Get the schema for subgraph ID {}",
+                            subgraph_id
+                        )),
+                    }],
+                })
+            }
+            "get_schema_by_ipfs_hash" => {
+                let ipfs_hash = arguments
+                    .as_ref()
+                    .and_then(|args| args.get("ipfsHash"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("{ipfsHash}")
+                    .to_string();
+
+                Ok(GetPromptResult {
+                    description: Some(
+                        "Fetch the schema for a specific subgraph deployment using its IPFS hash."
+                            .to_string(),
+                    ),
+                    messages: vec![PromptMessage {
+                        role: PromptMessageRole::User,
+                        content: PromptMessageContent::text(format!(
+                            "Get the schema for IPFS hash {}",
+                            ipfs_hash
+                        )),
+                    }],
+                })
+            }
+            "get_top_subgraph_deployments" => {
                 let contract_address = arguments
                     .as_ref()
                     .and_then(|args| args.get("contractAddress"))
@@ -526,7 +827,7 @@ impl ServerHandler for SubgraphServer {
                     messages: vec![PromptMessage {
                         role: PromptMessageRole::User,
                         content: PromptMessageContent::text(format!(
-                            "Get the top subgraphs for contract {} on chain {}",
+                            "Get the top subgraph deployments for contract {} on chain {}",
                             contract_address, chain
                         )),
                     }],
@@ -534,17 +835,6 @@ impl ServerHandler for SubgraphServer {
             }
             _ => Err(McpError::invalid_params("prompt not found", None)),
         }
-    }
-
-    async fn list_resource_templates(
-        &self,
-        _request: PaginatedRequestParam,
-        _: RequestContext<RoleServer>,
-    ) -> Result<ListResourceTemplatesResult, McpError> {
-        Ok(ListResourceTemplatesResult {
-            next_cursor: None,
-            resource_templates: Vec::new(),
-        })
     }
 }
 
