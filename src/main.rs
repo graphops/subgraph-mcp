@@ -151,7 +151,25 @@ impl SubgraphServer {
     }
 
     fn get_api_key(&self) -> Result<String, SubgraphError> {
-        env::var("GRAPHOPS_API_KEY").map_err(|_| SubgraphError::ApiKeyNotSet)
+        env::var("GATEWAY_API_KEY").map_err(|_| SubgraphError::ApiKeyNotSet)
+    }
+
+    fn get_gateway_url(&self) -> String {
+        env::var("GATEWAY_URL").unwrap_or_else(|_| GRAPHOPS_GATEWAY_URL.to_string())
+    }
+
+    fn get_graph_network_subgraph(&self) -> String {
+        env::var("GRAPH_NETWORK_SUBGRAPH")
+            .unwrap_or_else(|_| GRAPH_NETWORK_SUBGRAPH_ARBITRUM.to_string())
+    }
+
+    fn get_network_subgraph_query_url(&self, api_key: &str) -> String {
+        format!(
+            "{}/{}/deployments/id/{}",
+            self.get_gateway_url(),
+            api_key,
+            self.get_graph_network_subgraph()
+        )
     }
 
     async fn get_schema_by_deployment_id_internal(
@@ -159,10 +177,7 @@ impl SubgraphServer {
         deployment_id: &str,
     ) -> Result<String, SubgraphError> {
         let api_key = self.get_api_key()?;
-        let url = format!(
-            "{} {} {}",
-            GRAPHOPS_GATEWAY_URL, api_key, "GRAPH_NETWORK_SUBGRAPH_ARBITRUM"
-        );
+        let url = self.get_network_subgraph_query_url(&api_key);
 
         let query = r#"
         query SubgraphDeploymentSchema($id: String!) {
@@ -222,10 +237,7 @@ impl SubgraphServer {
         subgraph_id: &str,
     ) -> Result<String, SubgraphError> {
         let api_key = self.get_api_key()?;
-        let url = format!(
-            "{}/{}/deployments/id/{}",
-            GRAPHOPS_GATEWAY_URL, api_key, GRAPH_NETWORK_SUBGRAPH_ARBITRUM
-        );
+        let url = self.get_network_subgraph_query_url(&api_key);
 
         let query = r#"
         query SubgraphSchema($id: String!) {
@@ -287,10 +299,7 @@ impl SubgraphServer {
         ipfs_hash: &str,
     ) -> Result<String, SubgraphError> {
         let api_key = self.get_api_key()?;
-        let url = format!(
-            "{}/{}/deployments/id/{}",
-            GRAPHOPS_GATEWAY_URL, api_key, GRAPH_NETWORK_SUBGRAPH_ARBITRUM
-        );
+        let url = self.get_network_subgraph_query_url(&api_key);
 
         let query = r#"
         query DeploymentSchemaByIpfsHash($hash: String!) {
@@ -352,7 +361,10 @@ impl SubgraphServer {
         let api_key = self.get_api_key()?;
         let url = format!(
             "{}/{}/{}/{}",
-            GRAPHOPS_GATEWAY_URL, api_key, endpoint_type, id
+            self.get_gateway_url(),
+            api_key,
+            endpoint_type,
+            id
         );
 
         let mut request_body = serde_json::json!({
@@ -381,10 +393,7 @@ impl SubgraphServer {
         chain: &str,
     ) -> Result<serde_json::Value, SubgraphError> {
         let api_key = self.get_api_key()?;
-        let url = format!(
-            "{}/{}/deployments/id/{}",
-            GRAPHOPS_GATEWAY_URL, api_key, GRAPH_NETWORK_SUBGRAPH_ARBITRUM
-        );
+        let url = self.get_network_subgraph_query_url(&api_key);
 
         let query = r#"
         query TopSubgraphDeploymentsForContract($network: String!, $contractAddress: String!) {
