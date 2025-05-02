@@ -461,10 +461,16 @@ impl SubgraphServer {
             .await
         {
             Ok(schema) => Ok(CallToolResult::success(vec![Content::text(schema)])),
-            Err(e) => Err(McpError::internal_error(
-                "Failed to get schema by deployment ID",
-                Some(json!({ "error": e.to_string() })),
-            )),
+            Err(e) => match e {
+                SubgraphError::ApiKeyNotSet => Err(McpError::invalid_params(
+                    "Configuration error: API key not set. Please set the GATEWAY_API_KEY environment variable.",
+                    None,
+                )),
+                _ => Err(McpError::internal_error(
+                    e.to_string(),
+                    Some(json!({ "details": e.to_string() })),
+                )),
+            }
         }
     }
 
@@ -477,10 +483,16 @@ impl SubgraphServer {
     ) -> Result<CallToolResult, McpError> {
         match self.get_schema_by_subgraph_id_internal(&subgraph_id).await {
             Ok(schema) => Ok(CallToolResult::success(vec![Content::text(schema)])),
-            Err(e) => Err(McpError::internal_error(
-                "Failed to get schema by subgraph ID",
-                Some(json!({ "error": e.to_string() })),
-            )),
+            Err(e) => match e {
+                SubgraphError::ApiKeyNotSet => Err(McpError::invalid_params(
+                    "Configuration error: API key not set. Please set the GATEWAY_API_KEY environment variable.",
+                    None,
+                )),
+                _ => Err(McpError::internal_error(
+                    e.to_string(),
+                    Some(json!({ "details": e.to_string() })),
+                )),
+            }
         }
     }
 
@@ -493,10 +505,16 @@ impl SubgraphServer {
     ) -> Result<CallToolResult, McpError> {
         match self.get_schema_by_ipfs_hash_internal(&ipfs_hash).await {
             Ok(schema) => Ok(CallToolResult::success(vec![Content::text(schema)])),
-            Err(e) => Err(McpError::internal_error(
-                "Failed to get schema by IPFS hash",
-                Some(json!({ "error": e.to_string() })),
-            )),
+            Err(e) => match e {
+                SubgraphError::ApiKeyNotSet => Err(McpError::invalid_params(
+                    "Configuration error: API key not set. Please set the GATEWAY_API_KEY environment variable.",
+                    None,
+                )),
+                _ => Err(McpError::internal_error(
+                    e.to_string(),
+                    Some(json!({ "details": e.to_string() })),
+                )),
+            }
         }
     }
 
@@ -517,10 +535,16 @@ impl SubgraphServer {
                 "{:#}",
                 result
             ))])),
-            Err(e) => Err(McpError::internal_error(
-                "Failed to execute query by deployment ID",
-                Some(json!({ "error": e.to_string() })),
-            )),
+             Err(e) => match e {
+                SubgraphError::ApiKeyNotSet => Err(McpError::invalid_params(
+                    "Configuration error: API key not set. Please set the GATEWAY_API_KEY environment variable.",
+                    None,
+                )),
+                _ => Err(McpError::internal_error(
+                    e.to_string(),
+                    Some(json!({ "details": e.to_string() })),
+                )),
+            }
         }
     }
 
@@ -541,10 +565,16 @@ impl SubgraphServer {
                 "{:#}",
                 result
             ))])),
-            Err(e) => Err(McpError::internal_error(
-                "Failed to execute query by subgraph ID",
-                Some(json!({ "error": e.to_string() })),
-            )),
+             Err(e) => match e {
+                SubgraphError::ApiKeyNotSet => Err(McpError::invalid_params(
+                    "Configuration error: API key not set. Please set the GATEWAY_API_KEY environment variable.",
+                    None,
+                )),
+                _ => Err(McpError::internal_error(
+                    e.to_string(),
+                    Some(json!({ "details": e.to_string() })),
+                )),
+            }
         }
     }
 
@@ -568,10 +598,16 @@ impl SubgraphServer {
                 "{:#}",
                 result
             ))])),
-            Err(e) => Err(McpError::internal_error(
-                "Failed to get top subgraph deployments",
-                Some(json!({ "error": e.to_string() })),
-            )),
+             Err(e) => match e {
+                SubgraphError::ApiKeyNotSet => Err(McpError::invalid_params(
+                    "Configuration error: API key not set. Please set the GATEWAY_API_KEY environment variable.",
+                    None,
+                )),
+                _ => Err(McpError::internal_error(
+                    e.to_string(),
+                    Some(json!({ "details": e.to_string() })),
+                )),
+            }
         }
     }
 }
