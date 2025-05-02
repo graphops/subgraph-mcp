@@ -3,9 +3,10 @@ name = "subgraph-mcp"
 version = "0.1.0"
 edition = "2021"
 authors = ["sahra"]
+license = "Apache-2.0"
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.44.2", features = ["full"] }
 reqwest = { version = "0.11", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -15,6 +16,4 @@ log = "0.4"
 env_logger = "0.10"
 futures = "0.3"
 rmcp = "0.1.5"
-
-# JSON Schema support
 schemars = "0.8"

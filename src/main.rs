@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use anyhow::Result;
 use log::{error, info};
 use reqwest::Client;
