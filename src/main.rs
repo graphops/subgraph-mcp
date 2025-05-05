@@ -3,15 +3,21 @@
 use anyhow::Result;
 use log::{error, info};
 use reqwest::Client;
-use rmcp::ServiceExt;
-use std::env;
-use thiserror::Error;
-use tokio::io;
-
 use rmcp::{
-    model::*, schemars, service::RequestContext, tool, Error as McpError, RoleServer, ServerHandler,
+    model::*,
+    schemars,
+    service::RequestContext,
+    tool,
+    transport::sse_server::{SseServer, SseServerConfig},
+    Error as McpError, RoleServer, ServerHandler,
 };
 use serde_json::json;
+use std::{env, net::SocketAddr};
+use thiserror::Error;
+
+use rmcp::ServiceExt;
+use tokio::io;
+use tokio_util::sync::CancellationToken;
 
 const GATEWAY_URL: &str = "https://gateway.thegraph.com/api";
 const GRAPH_NETWORK_SUBGRAPH_ARBITRUM: &str = "QmdKXcBUHR3UyURqVRQHu1oV6VUkBrhi2vNvMx3bNDnUCc";
@@ -877,8 +883,20 @@ impl ServerHandler for SubgraphServer {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args: Vec<String> = env::args().collect();
+
+    // Check for --sse flag
+    if args.iter().any(|arg| arg == "--sse") {
+        start_sse_server().await
+    } else {
+        // Default to stdio if no --sse flag
+        start_stdio_server().await
+    }
+}
+
+async fn start_stdio_server() -> Result<()> {
     env_logger::init();
-    info!("Starting Subgraph MCP Server");
+    info!("Starting STDIO Subgraph MCP Server");
 
     let server = SubgraphServer::new();
 
@@ -888,5 +906,56 @@ async fn main() -> Result<()> {
     running.waiting().await?;
 
     info!("Server shutdown complete");
+    Ok(())
+}
+
+async fn start_sse_server() -> Result<()> {
+    env_logger::init();
+    info!("Starting SSE Subgraph MCP Server");
+    let host = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let port = env::var("PORT").unwrap_or_else(|_| "8000".to_string());
+    let bind_addr: SocketAddr = format!("{}:{}", host, port)
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid BIND address format '{}:{}': {}", host, port, e))?;
+
+    let sse_path = env::var("SSE_PATH").unwrap_or_else(|_| "/sse".to_string());
+    let post_path = env::var("POST_PATH").unwrap_or_else(|_| "/messages".to_string());
+
+    let server_shutdown_token = CancellationToken::new();
+    let service_shutdown_token;
+
+    let config = SseServerConfig {
+        bind: bind_addr,
+        sse_path,
+        post_path,
+        ct: server_shutdown_token.clone(), // Token for the server transport
+    };
+
+    let sse_server = SseServer::serve_with_config(config).await?;
+    info!("SSE Server listening on {}", sse_server.config.bind);
+
+    // Attach the Subgraph MCP service
+    // This returns a token specific to the service task
+    service_shutdown_token = sse_server.with_service(SubgraphServer::new);
+    info!("Subgraph MCP Service attached");
+
+    // Wait for a shutdown signal (Ctrl+C or SIGTERM)
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            info!("Ctrl+C (SIGINT) received, initiating graceful shutdown...");
+        },
+        _ = sigterm.recv() => {
+             info!("SIGTERM received, initiating graceful shutdown...");
+        }
+
+    };
+
+    info!("Signalling service and server to shut down...");
+    service_shutdown_token.cancel(); // Signal the MCP service task to stop
+    server_shutdown_token.cancel(); // Signal the underlying web server to stop
+
+    info!("Shutdown complete.");
     Ok(())
 }
