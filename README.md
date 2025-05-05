@@ -11,8 +11,13 @@ A Model Context Protocol (MCP) server that allows LLMs to interact with Subgraph
 
 ## Requirements
 
-- Rust (latest stable version recommended: 1.75+)
-- A Gateway API key
+- Rust (latest stable version recommended: 1.75+). \
+  You can install it using the following command on macOS, Linux, or other Unix-like systems: \
+  ```bash
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  ```
+  Follow the on-screen instructions. For other platforms, see the [official Rust installation guide](https://www.rust-lang.org/tools/install).
+- A Gateway API key for The Graph Network.
 - For Claude Desktop users: Latest Claude Desktop version
 
 ## Installation
@@ -32,13 +37,24 @@ cargo build --release
 
 #### Configuration with Claude Desktop
 
-Add the server to your `claude_desktop_config.json`:
+Add the server to your `claude_desktop_config.json`. You need to replace `/path/to/subgraph-mcp` with the **absolute path** to the compiled binary you built in the Installation step.
+
+**Finding the command path:**
+After running `cargo build --release`, the executable will typically be located at `target/release/subgraph-mcp` inside your project directory (`subgraph-mcp`).
+
+1. Navigate to your `subgraph-mcp` directory in the terminal.
+2. Run `pwd` (print working directory) to get the full path to the `subgraph-mcp` directory.
+3. Combine the output of `pwd` with `/target/release/subgraph-mcp`.
+
+For example, if `pwd` outputs `/Users/user/subgraph-mcp`, the full command path would be `/Users/user/subgraph-mcp/target/release/subgraph-mcp`.
+
+**Configuration Example:**
 
 ```json
 {
   "mcpServers": {
     "subgraph": {
-      "command": "/path/to/subgraph-mcp",
+      "command": "/path/to/your/subgraph-mcp/target/release/subgraph-mcp", // <-- Replace this with the actual path!
       "env": {
         "GATEWAY_API_KEY": "your-api-key-here"
       }
