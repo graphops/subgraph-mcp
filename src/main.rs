@@ -25,25 +25,29 @@ const SERVER_INSTRUCTIONS: &str = "This server interacts with subgraphs on The G
 Workflow: \
 1. **Determine the user's goal:** \
     a. Is the user asking for information *about* a specific address (e.g., find ENS name for 0x...)? \
-    b. Is the user asking for subgraphs that index a specific *contract address* they provided? \
-    c. Is the user trying to query a subgraph using a *subgraph ID* (e.g., 5zvR82...), *deployment ID* (e.g., 0x...), or *IPFS hash* (e.g., Qm...)? \
+    b. Is the user asking for subgraphs that index a specific *contract address* they provided? (Contract addresses start with `0x` and are typically 42 characters long, e.g., `0x1F98431c8aD98523631AE4a59f267346ea31F984`) \
+    c. Is the user trying to query a subgraph using a *subgraph ID* (e.g., `5zvR82...`, `66y54JQq5nSUPwruySqFPBM3FumChgcweEsFu2R9G12Y`), *deployment ID* (e.g., `0x...`, typically 66 characters long like `0xde0a7b5368f846f7d863d9f64949b688ad9818243151d488b4c6b206145b9ea3`), or *IPFS hash* (e.g., `Qm...`)? \
     d. Is the user asking for the *schema* of a subgraph using one of the above identifiers? \
 2. **Identify the chain** (IMPORTANT: use 'mainnet' for Ethereum mainnet, NOT 'ethereum'; use 'arbitrum-one' for Arbitrum, etc.). This is needed for `get_top_subgraph_deployments`. \
 3. **If Goal is (a) - Address Lookup (e.g., ENS):** \
     a. Identify the relevant **protocol** (e.g., ENS). \
-    b. Find the **protocol's main contract address** on the identified chain. For The Graph protocol contracts, refer to https://thegraph.com/docs/en/contracts/ and default to using Arbitrum addresses as this is the principal deployment. \
+    b. Find the **protocol's main contract address** on the identified chain. For The Graph protocol contracts, refer to https://thegraph.com/docs/en/contracts/ and default to using Arbitrum addresses as this is the principal deployment. (Contract addresses start with `0x`). \
     c. Use `get_top_subgraph_deployments` with the **protocol's contract address** and chain to find relevant deployment IDs. \
     d. Use the obtained deployment ID(s) with `execute_query_by_deployment_id`. The query should use the **original user-provided address** (from 1a) in its variables or filters to find the specific information (e.g., the ENS name). \
 4. **If Goal is (b) - Find Subgraphs for a Contract:** \
-    a. Use the **contract address provided by the user** (from 1b). \
-    b. Use `get_top_subgraph_deployments` with this **user-provided contract address** and the identified chain to find relevant deployment IDs. \
-    c. Use the obtained deployment ID(s) with `get_schema_by_deployment_id` or `execute_query_by_deployment_id` as needed. \
+    a. Use the **contract address provided by the user** (from 1b). Ensure it's a contract address (starts with `0x`, typically 42 characters) and not a subgraph ID (alphanumeric, e.g., `66y54JQq5nSUPwruySqFPBM3FumChgcweEsFu2R9G12Y`) or a deployment ID (starts with `0x` but is longer, ~66 chars). \
+    b. Use `get_top_subgraph_deployments` with this **user-provided contract address** and the identified/inferred chain to find relevant deployment IDs. \
+    c. If `get_top_subgraph_deployments` does not return any results with the initially identified chain: \
+        i. Retry `get_top_subgraph_deployments` with a list of major chains (e.g., 'mainnet', 'arbitrum-one', 'polygon', 'optimism', 'base'). \
+        ii. If still unsuccessful, attempt to detect the chain for the provided contract address (if feasible with available tools such as search). \
+        iii. If subgraphs are still not found, ask the user to specify the chain for the contract. Avoid performing general web searches to find the subgraph for the protocol too early in the process. \
+    d. Use the obtained deployment ID(s) with `get_schema_by_deployment_id` or `execute_query_by_deployment_id` as needed. \
 5. **If Goal is (c) - Query by Subgraph/Deployment ID/IPFS Hash:** \
-    a. Identify the type of identifier provided: **subgraph ID** (often alphanumeric, like 5zvR82...), **deployment ID** (starts with `0x...`), or **IPFS hash** (starts with `Qm...`). \
+    a. Identify the type of identifier provided: **subgraph ID** (alphanumeric, like `5zvR82...`, `66y54JQq5nSUPwruySqFPBM3FumChgcweEsFu2R9G12Y`), **deployment ID** (starts with `0x...`, typically 66 characters long, e.g., `0xde0a7b5368f846f7d863d9f64949b688ad9818243151d488b4c6b206145b9ea3`), or **IPFS hash** (starts with `Qm...`). \
     b. If it's a **subgraph ID**, use `execute_query_by_subgraph_id`. This targets the *latest* deployment associated with that subgraph ID. \
     c. If it's a **deployment ID** or **IPFS hash**, use `execute_query_by_deployment_id`. This targets the *specific, immutable* deployment corresponding to that ID/hash. \
 6. **If Goal is (d) - Get Schema:** \
-    a. Identify the type of identifier provided: **subgraph ID** (e.g., 5zvR82...), **deployment ID** (e.g., 0x...), or **IPFS hash** (e.g., Qm...). \
+    a. Identify the type of identifier provided: **subgraph ID** (e.g., `5zvR82...`), **deployment ID** (e.g., `0x...`), or **IPFS hash** (e.g., `Qm...`). \
     b. If it's a **subgraph ID**, use `get_schema_by_subgraph_id` to get the schema of the *current* deployment for that subgraph. \
     c. If it's a **deployment ID**, use `get_schema_by_deployment_id`. \
     d. If it's an **IPFS hash**, use `get_schema_by_ipfs_hash`. \
@@ -53,10 +57,11 @@ Workflow: \
     c. Include only the essential fields in your query. \
 **Important:** \
 *   Distinguish carefully between identifier types: \
-    *   **Subgraph ID** (e.g., `5zvR82...`): Logical identifier for a subgraph. Use `execute_query_by_subgraph_id` (queries latest deployment) or `get_schema_by_subgraph_id` (gets schema of latest deployment). \
-    *   **Deployment ID** (e.g., `0x4d7c...`): Identifier for a specific, immutable deployment. Use `execute_query_by_deployment_id` or `get_schema_by_deployment_id`. \
-    *   **IPFS Hash** (e.g., `QmTZ8e...`): Identifier for the manifest of a specific, immutable deployment. Use `execute_query_by_deployment_id` (the gateway treats it like a deployment ID for querying) or `get_schema_by_ipfs_hash`. \
-*   For `get_top_subgraph_deployments`, the `contractAddress` parameter *must* be the address of the contract you want to find indexed subgraphs for. \
+    *   **Subgraph ID** (e.g., `5zvR82...`, `66y54JQq5nSUPwruySqFPBM3FumChgcweEsFu2R9G12Y`): Logical identifier for a subgraph. Alphanumeric, does NOT start with `0x`. Use `execute_query_by_subgraph_id` (queries latest deployment) or `get_schema_by_subgraph_id` (gets schema of latest deployment). \
+    *   **Deployment ID** (e.g., `0x4d7c...`, `0xde0a7b5368f846f7d863d9f64949b688ad9818243151d488b4c6b206145b9ea3`): Identifier for a specific, immutable deployment. Starts with `0x` and is typically 66 characters long. Use `execute_query_by_deployment_id` or `get_schema_by_deployment_id`. \
+    *   **IPFS Hash** (e.g., `QmTZ8e...`): Identifier for the manifest of a specific, immutable deployment. Starts with `Qm`. Use `execute_query_by_deployment_id` (the gateway treats it like a deployment ID for querying) or `get_schema_by_ipfs_hash`. \
+    *   **Contract Address** (e.g., `0x1F98431c8aD98523631AE4a59f267346ea31F984`): Address of a smart contract on a blockchain. Starts with `0x` and is typically 42 characters long. Used with `get_top_subgraph_deployments`. \
+*   For `get_top_subgraph_deployments`, the `contractAddress` parameter *must* be the address of the contract you want to find indexed subgraphs for (starts with `0x`, typically 42 characters). Do not confuse this with a subgraph ID or deployment ID. \
 *   Chain parameter for `get_top_subgraph_deployments` must be 'mainnet' for Ethereum mainnet, not 'ethereum'. \
 *   The Graph protocol has migrated to Arbitrum One. When working with The Graph protocol directly, refer to https://thegraph.com/docs/en/contracts/ and use Arbitrum contract addresses by default unless specifically requested otherwise. \
 *   When asked to provide ENS names for any address, always rely on the ENS contracts and subgraphs. \
