@@ -7,7 +7,10 @@ A Model Context Protocol (MCP) server that allows LLMs to interact with Subgraph
 - Get the GraphQL schema for any subgraph/deployment
 - Execute GraphQL queries against any subgraph/deployment
 - Find the top subgraph deployments for a contract address on a specific chain
+- Search for subgraphs by keyword
+- Get 30-day query volume for subgraph deployments
 - Supports MCP resources, tools, and prompts
+- Can run in STDIO mode or as an SSE (Server-Sent Events) server
 
 ## Requirements
 
@@ -33,7 +36,11 @@ cargo build --release
 
 ## Usage
 
-### Integration with MCP clients
+The server can be run in two modes: STDIO or SSE.
+
+### STDIO Mode (e.g., for Claude Desktop)
+
+This mode is typically used for direct integration with local MCP clients like Claude Desktop.
 
 #### Configuration with Claude Desktop
 
@@ -71,12 +78,14 @@ After adding the configuration, restart Claude Desktop.
 
 The server exposes the following tools:
 
+- **`search_subgraphs_by_keyword`**: Search for subgraphs by keyword in their display names. Ordered by signal. Returns top 10 results if total results ≤ 100, or square root of total otherwise. (Corresponds to Step 2 of the workflow).
+- **`get_deployment_30day_query_counts`**: Get the aggregate query count over the last 30 days for multiple subgraph deployments (using their IPFS hashes), sorted by query count. (Corresponds to Step 3 of the workflow).
 - **`get_schema_by_deployment_id`**: Get the GraphQL schema for a specific subgraph deployment using its _deployment ID_ (e.g., `0x...`).
 - **`get_schema_by_subgraph_id`**: Get the GraphQL schema for the _current_ deployment associated with a _subgraph ID_ (e.g., `5zvR82...`).
 - **`get_schema_by_ipfs_hash`**: Get the GraphQL schema for a specific subgraph deployment using its manifest's _IPFS hash_ (e.g., `Qm...`).
 - **`execute_query_by_deployment_id`**: Execute a GraphQL query against a specific, immutable subgraph deployment using its _deployment ID_ (e.g., `0x...`) or _IPFS hash_ (e.g., `Qm...`).
 - **`execute_query_by_subgraph_id`**: Execute a GraphQL query against the _latest_ deployment associated with a _subgraph ID_ (e.g., `5zvR82...`).
-- **`get_top_subgraph_deployments`**: Get the top 3 subgraph deployments indexing a given contract address on a specific chain, ordered by query fees.
+- **`get_top_subgraph_deployments`**: Get the top 3 subgraph deployments indexing a given contract address on a specific chain, ordered by query fees. (Used in the "Contract Address Lookup" special case).
 
 **Key Identifier Types:**
 
@@ -84,40 +93,45 @@ The server exposes the following tools:
 - **Deployment ID** (e.g., `0x4d7c...`): Identifier for a specific, immutable deployment. Use `execute_query_by_deployment_id` or `get_schema_by_deployment_id`.
 - **IPFS Hash** (e.g., `QmTZ8e...`): Identifier for the manifest of a specific, immutable deployment. Use `execute_query_by_deployment_id` (the gateway treats it like a deployment ID for querying) or `get_schema_by_ipfs_hash`.
 
-Example usage in Claude:
+Example usage in Claude (or other MCP clients), keeping the workflow in mind:
 
 ```
-Get the schema for subgraph deployment 0xYourDeploymentIdHere
+User: Find subgraphs for Uniswap.
 
-Run this query against subgraph 5zvR82YourSubgraphIdHere: { users(first: 1) { id } }
+Assistant (after `search_subgraphs_by_keyword` and `get_deployment_30day_query_counts`):
+I found several Uniswap subgraphs.
+- Uniswap v3 on Ethereum is the most active (X queries last 30 days).
+- Uniswap v2 on Ethereum (Y queries last 30 days).
+- Uniswap v3 on Arbitrum (Z queries last 30 days).
+Which specific version and network are you interested in?
 
 Find the top subgraphs for contract 0x1f98431c8ad98523631ae4a59f267346ea31f984 on arbitrum-one
 ```
 
-### Natural Language Queries
+### Natural Language Queries (Following the Workflow)
 
-Once connected to Claude with this MCP server, you can ask natural language questions about subgraph data without writing GraphQL queries manually:
+Once connected to an LLM with this MCP server, you can ask natural language questions. The LLM should adhere to the `SERVER_INSTRUCTIONS` workflow:
 
 ```
-What are the pairs with maximum volume on 0xde0a7b5368f846f7d863d9f64949b688ad9818243151d488b4c6b206145b9ea3?
+What are the most active pools on Uniswap v3 on Ethereum?
 
-Which tokens have the highest market cap in this subgraph?
-
-Show me the most recent 5 swaps for the USDC/ETH pair
+(LLM internally performs search, query volume check, selects subgraph, potentially gets schema, then formulates and executes the query)
 ```
 
-Claude will automatically (given that you added The Graph resource to the session context):
+The LLM will automatically:
 
-1.  Identify the user's goal (lookup, find subgraphs, query, get schema).
-2.  Use `get_top_subgraph_deployments` if necessary to find relevant deployment IDs.
-3.  Fetch and understand the subgraph schema using the appropriate `get_schema_by_*` tool.
-4.  Convert your question into an appropriate GraphQL query.
-5.  Execute the query using the correct `execute_query_by_*` tool based on the identifier type.
-6.  Present the results in a readable format.
+1.  Follow the **Server Instructions & Workflow** described above.
+2.  Use `search_subgraphs_by_keyword` to find candidate subgraphs.
+3.  Use `get_deployment_30day_query_counts` to verify activity and aid selection.
+4.  Use `get_top_subgraph_deployments` if a contract address is provided.
+5.  Fetch and understand the subgraph schema using the appropriate `get_schema_by_*` tool.
+6.  Convert your question into an appropriate GraphQL query.
+7.  Execute the query using the correct `execute_query_by_*` tool based on the identifier type and confirmed active deployment.
+8.  Present the results in a readable format.
 
 ## Prompts
 
-The server provides predefined prompts for each tool:
+The server provides predefined prompts for most tools (as discoverable via MCP's `list_prompts`):
 
 - `get_schema_by_deployment_id`: Get the schema for a deployment ID.
 - `get_schema_by_subgraph_id`: Get the schema for a subgraph ID.
