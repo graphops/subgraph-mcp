@@ -12,7 +12,11 @@ use rmcp::{
     Error as McpError, RoleServer, ServerHandler,
 };
 use serde_json::json;
-use std::{env, net::SocketAddr};
+use std::{
+    env,
+    net::SocketAddr,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use thiserror::Error;
 
 use rmcp::ServiceExt;
@@ -21,6 +25,7 @@ use tokio_util::sync::CancellationToken;
 
 const GATEWAY_URL: &str = "https://gateway.thegraph.com/api";
 const GRAPH_NETWORK_SUBGRAPH_ARBITRUM: &str = "QmdKXcBUHR3UyURqVRQHu1oV6VUkBrhi2vNvMx3bNDnUCc";
+const GATEWAY_QOS_ORACLE: &str = "QmZmb6z87QmqBLmkMhaqWy7h2GLF1ey8Qj7YSRuqSGMjeH";
 
 // SERVER_INSTRUCTIONS (Full instructions needed here)
 const SERVER_INSTRUCTIONS: &str =  "**Interacting with The Graph Subgraphs **
@@ -154,6 +159,14 @@ pub struct GetTopSubgraphDeploymentsRequest {
     pub contract_address: String,
     #[schemars(description = "The chain name (e.g., 'mainnet', 'arbitrum-one')")]
     pub chain: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetDeployment30DayQueryCountsRequest {
+    #[schemars(
+        description = "List of deployment IDs (Qm...) to get query counts for the last 30 days"
+    )]
+    pub deployment_ids: Vec<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -730,6 +743,162 @@ impl SubgraphServer {
         SearchSubgraphsByKeywordRequest { keyword }: SearchSubgraphsByKeywordRequest,
     ) -> Result<CallToolResult, McpError> {
         match self.search_subgraphs_by_keyword_internal(&keyword).await {
+            Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "{:#}",
+                result
+            ))])),
+            Err(e) => match e {
+                SubgraphError::ApiKeyNotSet => Err(McpError::invalid_params(
+                    "Configuration error: API key not set. Please set the GATEWAY_API_KEY environment variable.",
+                    None,
+                )),
+                _ => Err(McpError::internal_error(
+                    e.to_string(),
+                    Some(json!({ "details": e.to_string() })),
+                )),
+            }
+        }
+    }
+
+    async fn get_deployment_30day_query_counts_internal(
+        &self,
+        deployment_ids: &[String],
+    ) -> Result<serde_json::Value, SubgraphError> {
+        let api_key = self.get_api_key()?;
+        let url = format!(
+            "{}/{}/deployments/id/{}",
+            GATEWAY_URL, api_key, GATEWAY_QOS_ORACLE
+        );
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| SubgraphError::GraphQlError("Error calculating timestamp".to_string()))?
+            .as_secs();
+
+        let thirty_days_ago = now - (30 * 24 * 60 * 60);
+
+        let query = r#"
+        query GetSubgraphDeployment30DayQueryCounts(
+          $deploymentIDs: [ID!]!,
+          $thirtyDaysAgoTimestamp: BigInt!
+        ) {
+          subgraphDeployments(where: { id_in: $deploymentIDs }) {
+            id
+            queryDailyDataPoints(
+              where: { dayStart_gte: $thirtyDaysAgoTimestamp }
+              orderBy: dayStart
+              orderDirection: asc
+              first: 31 # Max ~30 daily entries for 30 days
+            ) {
+              query_count
+              dayStart # For verification/debugging
+            }
+          }
+        }
+        "#;
+
+        let variables = serde_json::json!({
+            "deploymentIDs": deployment_ids,
+            "thirtyDaysAgoTimestamp": thirty_days_ago.to_string()
+        });
+
+        let request_body = serde_json::json!({
+            "query": query,
+            "variables": variables
+        });
+
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&request_body)
+            .send()
+            .await?
+            .json::<GraphQLResponse>()
+            .await?;
+
+        if let Some(errors) = response.errors {
+            if !errors.is_empty() {
+                return Err(SubgraphError::GraphQlError(errors[0].message.clone()));
+            }
+        }
+
+        let data = response.data.ok_or_else(|| {
+            SubgraphError::GraphQlError("No data returned from the GraphQL API".to_string())
+        })?;
+
+        // Process the results to aggregate counts
+        let deployments = data
+            .get("subgraphDeployments")
+            .and_then(|d| d.as_array())
+            .ok_or_else(|| SubgraphError::GraphQlError("Unexpected response format".to_string()))?;
+
+        let mut query_counts: Vec<serde_json::Value> = Vec::new();
+
+        for deployment in deployments {
+            let id = deployment
+                .get("id")
+                .and_then(|id| id.as_str())
+                .ok_or_else(|| {
+                    SubgraphError::GraphQlError("Missing deployment ID in response".to_string())
+                })?;
+
+            let data_points = deployment
+                .get("queryDailyDataPoints")
+                .and_then(|points| points.as_array())
+                .ok_or_else(|| {
+                    SubgraphError::GraphQlError("Missing data points in response".to_string())
+                })?;
+
+            let mut total_query_count: i64 = 0;
+            for point in data_points {
+                let count = point
+                    .get("query_count")
+                    .and_then(|c| c.as_str())
+                    .ok_or_else(|| {
+                        SubgraphError::GraphQlError("Missing query count in data point".to_string())
+                    })?;
+
+                total_query_count += count.parse::<i64>().unwrap_or(0);
+            }
+
+            query_counts.push(serde_json::json!({
+                "deployment_id": id,
+                "total_query_count": total_query_count,
+                "data_points_count": data_points.len()
+            }));
+        }
+
+        // Sort by query count in descending order
+        query_counts.sort_by(|a, b| {
+            let count_a = a
+                .get("total_query_count")
+                .and_then(|c| c.as_i64())
+                .unwrap_or(0);
+            let count_b = b
+                .get("total_query_count")
+                .and_then(|c| c.as_i64())
+                .unwrap_or(0);
+            count_b.cmp(&count_a)
+        });
+
+        Ok(serde_json::json!({
+            "deployments": query_counts,
+            "total_deployments": query_counts.len()
+        }))
+    }
+
+    #[tool(
+        description = "Get the aggregate query count over the last 30 days for multiple subgraph deployments, sorted by query count in descending order."
+    )]
+    async fn get_deployment_30day_query_counts(
+        &self,
+        #[tool(aggr)]
+        #[schemars(
+            description = "Request containing a list of deployment IDs to get 30-day query counts for"
+        )]
+        GetDeployment30DayQueryCountsRequest { deployment_ids }: GetDeployment30DayQueryCountsRequest,
+    ) -> Result<CallToolResult, McpError> {
+        match self.get_deployment_30day_query_counts_internal(&deployment_ids).await {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "{:#}",
                 result
