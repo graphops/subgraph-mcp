@@ -21,57 +21,75 @@ use tokio_util::sync::CancellationToken;
 
 const GATEWAY_URL: &str = "https://gateway.thegraph.com/api";
 const GRAPH_NETWORK_SUBGRAPH_ARBITRUM: &str = "QmdKXcBUHR3UyURqVRQHu1oV6VUkBrhi2vNvMx3bNDnUCc";
-const SERVER_INSTRUCTIONS: &str = "This server interacts with subgraphs on The Graph protocol. \
-Workflow: \
-1. **Determine the user's goal:** \
-    a. Is the user asking for information *about* a specific address (e.g., find ENS name for 0x...)? \
-    b. Is the user asking for subgraphs that index a specific *contract address* they provided? (Contract addresses start with `0x` and are typically 42 characters long, e.g., `0x1F98431c8aD98523631AE4a59f267346ea31F984`) \
-    c. Is the user trying to query a subgraph using a *subgraph ID* (e.g., `5zvR82...`, `66y54JQq5nSUPwruySqFPBM3FumChgcweEsFu2R9G12Y`), *deployment ID* (e.g., `0x...`, typically 66 characters long like `0xde0a7b5368f846f7d863d9f64949b688ad9818243151d488b4c6b206145b9ea3`), or *IPFS hash* (e.g., `Qm...`)? \
-    d. Is the user asking for the *schema* of a subgraph using one of the above identifiers? \
-2. **Identify the chain** (IMPORTANT: use 'mainnet' for Ethereum mainnet, NOT 'ethereum'; use 'arbitrum-one' for Arbitrum, etc.). This is needed for `get_top_subgraph_deployments`. \
-3. **If Goal is (a) - Address Lookup (e.g., ENS):** \
-    a. Identify the relevant **protocol** (e.g., ENS). \
-    b. Find the **protocol's main contract address** on the identified chain. For The Graph protocol contracts, refer to https://thegraph.com/docs/en/contracts/ and default to using Arbitrum addresses as this is the principal deployment. (Contract addresses start with `0x`). \
-    c. Use `get_top_subgraph_deployments` with the **protocol's contract address** and chain to find relevant deployment IDs. \
-    d. Use the obtained deployment ID(s) with `execute_query_by_deployment_id`. The query should use the **original user-provided address** (from 1a) in its variables or filters to find the specific information (e.g., the ENS name). \
-4. **If Goal is (b) - Find Subgraphs for a Contract:** \
-    a. Use the **contract address provided by the user** (from 1b). Ensure it's a contract address (starts with `0x`, typically 42 characters) and not a subgraph ID (alphanumeric, e.g., `66y54JQq5nSUPwruySqFPBM3FumChgcweEsFu2R9G12Y`) or a deployment ID (starts with `0x` but is longer, ~66 chars). \
-    b. Use `get_top_subgraph_deployments` with this **user-provided contract address** and the identified/inferred chain to find relevant deployment IDs. \
-    c. If `get_top_subgraph_deployments` does not return any results with the initially identified chain: \
-        i. Retry `get_top_subgraph_deployments` with a list of major chains (e.g., 'mainnet', 'arbitrum-one', 'polygon', 'optimism', 'base'). \
-        ii. If still unsuccessful, attempt to detect the chain for the provided contract address (if feasible with available tools such as search). \
-        iii. If subgraphs are still not found, ask the user to specify the chain for the contract. Avoid performing general web searches to find the subgraph for the protocol too early in the process. \
-    d. Use the obtained deployment ID(s) with `get_schema_by_deployment_id` or `execute_query_by_deployment_id` as needed. \
-5. **If Goal is (c) - Query by Subgraph/Deployment ID/IPFS Hash:** \
-    a. Identify the type of identifier provided: **subgraph ID** (alphanumeric, like `5zvR82...`, `66y54JQq5nSUPwruySqFPBM3FumChgcweEsFu2R9G12Y`), **deployment ID** (starts with `0x...`, typically 66 characters long, e.g., `0xde0a7b5368f846f7d863d9f64949b688ad9818243151d488b4c6b206145b9ea3`), or **IPFS hash** (starts with `Qm...`). \
-    b. If it's a **subgraph ID**, use `execute_query_by_subgraph_id`. This targets the *latest* deployment associated with that subgraph ID. \
-    c. If it's a **deployment ID** or **IPFS hash**, use `execute_query_by_deployment_id`. This targets the *specific, immutable* deployment corresponding to that ID/hash. \
-6. **If Goal is (d) - Get Schema:** \
-    a. Identify the type of identifier provided: **subgraph ID** (e.g., `5zvR82...`), **deployment ID** (e.g., `0x...`), or **IPFS hash** (e.g., `Qm...`). \
-    b. If it's a **subgraph ID**, use `get_schema_by_subgraph_id` to get the schema of the *current* deployment for that subgraph. \
-    c. If it's a **deployment ID**, use `get_schema_by_deployment_id`. \
-    d. If it's an **IPFS hash**, use `get_schema_by_ipfs_hash`. \
-7. **Write clean GraphQL queries:** \
-    a. Omit the 'variables' parameter when not needed. \
-    b. Create simple GraphQL structures without unnecessary complexity. \
-    c. Include only the essential fields in your query. \
-**Important:** \
-*   Distinguish carefully between identifier types: \
-    *   **Subgraph ID** (e.g., `5zvR82...`, `66y54JQq5nSUPwruySqFPBM3FumChgcweEsFu2R9G12Y`): Logical identifier for a subgraph. Alphanumeric, does NOT start with `0x`. Use `execute_query_by_subgraph_id` (queries latest deployment) or `get_schema_by_subgraph_id` (gets schema of latest deployment). \
-    *   **Deployment ID** (e.g., `0x4d7c...`, `0xde0a7b5368f846f7d863d9f64949b688ad9818243151d488b4c6b206145b9ea3`): Identifier for a specific, immutable deployment. Starts with `0x` and is typically 66 characters long. Use `execute_query_by_deployment_id` or `get_schema_by_deployment_id`. \
-    *   **IPFS Hash** (e.g., `QmTZ8e...`): Identifier for the manifest of a specific, immutable deployment. Starts with `Qm`. Use `execute_query_by_deployment_id` (the gateway treats it like a deployment ID for querying) or `get_schema_by_ipfs_hash`. \
-    *   **Contract Address** (e.g., `0x1F98431c8aD98523631AE4a59f267346ea31F984`): Address of a smart contract on a blockchain. Starts with `0x` and is typically 42 characters long. Used with `get_top_subgraph_deployments`. \
-*   For `get_top_subgraph_deployments`, the `contractAddress` parameter *must* be the address of the contract you want to find indexed subgraphs for (starts with `0x`, typically 42 characters). Do not confuse this with a subgraph ID or deployment ID. \
-*   Chain parameter for `get_top_subgraph_deployments` must be 'mainnet' for Ethereum mainnet, not 'ethereum'. \
-*   The Graph protocol has migrated to Arbitrum One. When working with The Graph protocol directly, refer to https://thegraph.com/docs/en/contracts/ and use Arbitrum contract addresses by default unless specifically requested otherwise. \
-*   When asked to provide ENS names for any address, always rely on the ENS contracts and subgraphs. \
-*   Never use hardcoded deployment IDs/hashes/subgraph IDs from memory unless provided directly by the user. Use `get_top_subgraph_deployments` first to discover relevant deployments if needed. \
-*   If a query or schema fetch fails, double-check that the correct tool was used for the given identifier type (subgraph ID vs. deployment ID vs. IPFS hash) and that the identifier itself is correct. \
-*   Clean query structure: Keep GraphQL queries simple with only necessary fields, omit the variables parameter when not needed, and use a clear, minimal query structure. \
-*   Protocol version awareness: When querying blockchain protocol data (like Uniswap, Aave, Compound, etc.), prioritize the latest major version unless specified otherwise. \
-*   Contract address verification: When accessing blockchain protocol data through subgraphs found via `get_top_subgraph_deployments`, verify that the contract address corresponds to the intended protocol by checking the schema before proceeding with further queries. \
-*   Clarification thresholds: When a query about blockchain data lacks specificity (protocol version, timeframe, metrics of interest), request clarification if the potential interpretations would lead to significantly different results. \
-*   Context inference: For blockchain data queries, infer context from recent protocol developments (e.g., default to Uniswap V3 over V2 if unspecified). ";
+
+// SERVER_INSTRUCTIONS (Full instructions needed here)
+const SERVER_INSTRUCTIONS: &str =  "**Interacting with The Graph Subgraphs **
+
+**Core Principle: Search First, Identify, Execute.** Always prioritize finding the target Subgraph ID, Deployment ID, or IPFS Hash via direct web search.
+
+**Standard Workflow (Default for ALL requests unless specified otherwise):**
+
+1.  **Analyze User Request:**
+    *   Identify the **protocol name** (e.g., \"Uniswap\", \"Aave\", \"ENS\").
+    *   Determine the **version** (default to latest if unspecified, e.g., \"v3\" for Uniswap).
+    *   Identify the **blockchain network** (ask if unclear; use 'ethereum' for Mainnet in search, 'arbitrum-one', etc.).
+    *   Determine the **goal**: Query data? Get schema? Look up info *about* an address (e.g., find ENS name for `0x...`)?
+
+2.  **Perform Targeted Web Search (Primary Method):**
+    *   Construct search queries using `site:thegraph.com` or `site:graphseer.com`.
+    *   **Include:** Protocol name, version, and network. Add keywords like \"subgraph\", \"deployment id\", or \"subgraph id\".
+    *   **Examples:**
+        *   `site:thegraph.com Uniswap v3 subgraph ethereum subgraph id`
+        *   `site:thegraph.com ENS subgraph ethereum subgraph id`
+        *   `site:thegraph.comAave v2 subgraph arbitrum-one subgraph id`
+    *   **Goal:** Find a **Subgraph ID** (e.g., `5zvR82...`), **Deployment ID** (e.g., `0x...`, 66 chars), or **IPFS Hash** (e.g., `Qm...`) directly from search results. Prioritize finding the Subgraph ID if available, as it targets the latest version.
+    *   **Note:** If you find more than one result, prioritize the one with the most queries and signal. 
+    
+3.  **If Identifier Found via Search:**
+    *   Proceed directly to **Step 5: Execute Action**.
+
+4.  **If Search Fails or is Ambiguous:**
+    *   Perform preliminary web searches *without* `site:` to clarify protocol version or chain if unsure.
+    *   Re-attempt the targeted search (Step 2) with clarified information.
+    *   If still unsuccessful after retries, ask the user for clarification (e.g., \"Which version of Uniswap?\", \"Which network is that Aave deployment on?\", \"Could you provide the Subgraph ID?\").
+    *   **Crucially: Do NOT fall back to finding the protocol's contract address to then use `get_top_subgraph_deployments`.** This tool is reserved for the specific workflow below.
+
+5.  **Execute Action (Using Identifier Found via Search or Provided Directly):**
+    a.  **Identify the Identifier Type:** Subgraph ID, Deployment ID, or IPFS Hash.
+    b.  **Determine the Correct Tool based on Goal & Identifier:**
+        *   **Goal: Query Data**
+            *   Subgraph ID -> `execute_query_by_subgraph_id`
+            *   Deployment ID / IPFS Hash -> `execute_query_by_deployment_id`
+        *   **Goal: Get Schema**
+            *   Subgraph ID -> `get_schema_by_subgraph_id`
+            *   Deployment ID -> `get_schema_by_deployment_id`
+            *   IPFS Hash -> `get_schema_by_ipfs_hash`
+        *   **Goal: Address Lookup (e.g., ENS name for `0xABC...`)**
+            *   Use the identifier found via search (e.g., the ENS Subgraph ID).
+            *   Use the appropriate query tool (`execute_query_by_subgraph_id` or `_by_deployment_id`).
+            *   **Include the user's original address (`0xABC...`) within the GraphQL query's variables or filters.** (e.g., `query GetENS($addr: Bytes!) { domains(where: { owner: $addr }) { name } }`, variables: `{\"addr\": \"0xABC...\"}`)
+    c.  **Write Clean GraphQL Queries:** Simple structure, omit 'variables' if unused, include only essential fields.
+
+**Specific Workflow (ONLY when User Provides a Contract Address to Find *Its* Subgraphs):**
+
+1.  **Verify Trigger:** Confirm the user explicitly provided a **Contract Address** (`0x...`, typically 42 chars) AND asked a question like \"Which subgraphs index this contract?\" or \"Find subgraphs related to `0x123...`\".
+2.  **Identify Chain:** Determine the blockchain network for the contract address (ask user if unknown, try common ones like 'mainnet', 'arbitrum-one', 'polygon', 'optimism', 'base'). Use 'mainnet' for Ethereum, etc., for the tool parameter.
+3.  **Use `get_top_subgraph_deployments`:**
+    *   Call the tool with the **user-provided contract address** and the identified **chain**.
+    *   This tool specifically finds *deployments* that index the *given contract address*.
+4.  **Process Results:**
+    *   The tool returns a list of **Deployment IDs**.
+    *   Use these Deployment IDs with `get_schema_by_deployment_id` or `execute_query_by_deployment_id` as needed for the user's follow-up request.
+
+**Key Reminders & Best Practices:**
+
+*   **SEARCH FIRST:** This is the default. Only deviate if the user explicitly provides a contract address and asks about *its* indexing subgraphs.
+*   **`get_top_subgraph_deployments` is Specific:** Use it *only* for the \"Specific Workflow\" above, triggered by a user-provided contract address. **Do not use it after finding a protocol's contract address via search.**
+*   **Identifier Distinction:** Crucial for selecting the right tool. Review types (Subgraph ID, Deployment ID, IPFS Hash, Contract Address) if unsure.
+*   **Chain Names:** 'mainnet' (for Ethereum), 'arbitrum-one', etc., for the `chain` parameter in `get_top_subgraph_deployments`. Use 'ethereum', 'arbitrum-one', etc., in *search queries*.
+*   **No Hardcoding:** Discover identifiers via search; don't use memorized ones unless provided by the user *in the current turn*.
+*   **Latest Versions/Clarification:** Default to latest protocol versions; ask user if ambiguity arises.
+*   **Clean Queries:** Keep GraphQL minimal and focused.";
 
 #[derive(Debug, Error)]
 enum SubgraphError {
@@ -90,6 +108,12 @@ enum SubgraphError {
 pub struct GetSchemaByDeploymentIdRequest {
     #[schemars(description = "The deployment ID (e.g., 0x...) of the specific deployment")]
     pub deployment_id: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct SearchSubgraphsByKeywordRequest {
+    #[schemars(description = "Keyword to search for in subgraph names")]
+    pub keyword: String,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -445,6 +469,90 @@ impl SubgraphServer {
         Ok(data)
     }
 
+    async fn search_subgraphs_by_keyword_internal(
+        &self,
+        keyword: &str,
+    ) -> Result<serde_json::Value, SubgraphError> {
+        let api_key = self.get_api_key()?;
+        let url = self.get_network_subgraph_query_url(&api_key);
+
+        let query = r#"
+        query SearchSubgraphsByKeyword($keyword: String!) {
+          subgraphs(
+            where: {metadata_: {displayName_contains_nocase: $keyword}}
+            orderBy: currentSignalledTokens
+            orderDirection: desc
+            first: 1000
+          ) {
+            id
+            metadata {
+              displayName
+            }
+            currentVersion {
+              subgraphDeployment {
+                ipfsHash
+              }
+            }
+          }
+        }
+        "#;
+
+        let variables = serde_json::json!({
+            "keyword": keyword
+        });
+
+        let request_body = serde_json::json!({
+            "query": query,
+            "variables": variables
+        });
+
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&request_body)
+            .send()
+            .await?
+            .json::<GraphQLResponse>()
+            .await?;
+
+        if let Some(errors) = response.errors {
+            if !errors.is_empty() {
+                return Err(SubgraphError::GraphQlError(errors[0].message.clone()));
+            }
+        }
+
+        let data = response.data.ok_or_else(|| {
+            SubgraphError::GraphQlError("No data returned from the GraphQL API".to_string())
+        })?;
+
+        // Process the results based on the requirements
+        if let Some(subgraphs) = data.get("subgraphs").and_then(|s| s.as_array()) {
+            let total_count = subgraphs.len();
+
+            // Determine how many results to return
+            let limit = if total_count <= 100 {
+                10 // Return top 10 if total is <= 100
+            } else {
+                // Return square root of total if > 100
+                (total_count as f64).sqrt().ceil() as usize
+            };
+
+            // Create a new limited result
+            let limited_subgraphs = subgraphs.iter().take(limit).collect::<Vec<_>>();
+
+            // Build the result JSON
+            let result = serde_json::json!({
+                "subgraphs": limited_subgraphs,
+                "total": total_count,
+                "returned": limited_subgraphs.len(),
+            });
+
+            return Ok(result);
+        }
+
+        Ok(data)
+    }
+
     fn _create_resource_text(&self, uri: &str, name: &str) -> Resource {
         RawResource::new(uri, name.to_string()).no_annotation()
     }
@@ -611,6 +719,33 @@ impl SubgraphServer {
             }
         }
     }
+
+    #[tool(
+        description = "Search for subgraphs by keyword in their display names, ordered by signal. Returns top 10 results if total results ≤ 100, or square root of total otherwise."
+    )]
+    async fn search_subgraphs_by_keyword(
+        &self,
+        #[tool(aggr)]
+        #[schemars(description = "Request containing the keyword to search for in subgraph names")]
+        SearchSubgraphsByKeywordRequest { keyword }: SearchSubgraphsByKeywordRequest,
+    ) -> Result<CallToolResult, McpError> {
+        match self.search_subgraphs_by_keyword_internal(&keyword).await {
+            Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "{:#}",
+                result
+            ))])),
+            Err(e) => match e {
+                SubgraphError::ApiKeyNotSet => Err(McpError::invalid_params(
+                    "Configuration error: API key not set. Please set the GATEWAY_API_KEY environment variable.",
+                    None,
+                )),
+                _ => Err(McpError::internal_error(
+                    e.to_string(),
+                    Some(json!({ "details": e.to_string() })),
+                )),
+            }
+        }
+    }
 }
 
 #[tool(tool_box)]
@@ -674,6 +809,15 @@ impl ServerHandler for SubgraphServer {
                     Some(vec![PromptArgument {
                         name: "deploymentId".to_string(),
                         description: Some("The ID of the subgraph deployment".to_string()),
+                        required: Some(true),
+                    }]),
+                ),
+                Prompt::new(
+                    "search_subgraphs_by_keyword",
+                    Some("Search for subgraphs by keyword in their display names"),
+                    Some(vec![PromptArgument {
+                        name: "keyword".to_string(),
+                        description: Some("The keyword to search for in subgraph names".to_string()),
                         required: Some(true),
                     }]),
                 ),
@@ -776,6 +920,27 @@ impl ServerHandler for SubgraphServer {
                         content: PromptMessageContent::text(format!(
                             "Get the schema for subgraph deployment {}",
                             deployment_id
+                        )),
+                    }],
+                })
+            }
+            "search_subgraphs_by_keyword" => {
+                let keyword = arguments
+                    .as_ref()
+                    .and_then(|args| args.get("keyword"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("{keyword}")
+                    .to_string();
+
+                Ok(GetPromptResult {
+                    description: Some(
+                        "Search for subgraphs by keyword in their display names".to_string(),
+                    ),
+                    messages: vec![PromptMessage {
+                        role: PromptMessageRole::User,
+                        content: PromptMessageContent::text(format!(
+                            "Find subgraphs related to \"{}\"",
+                            keyword
                         )),
                     }],
                 })
