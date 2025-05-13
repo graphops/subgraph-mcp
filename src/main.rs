@@ -28,73 +28,58 @@ const GRAPH_NETWORK_SUBGRAPH_ARBITRUM: &str = "QmdKXcBUHR3UyURqVRQHu1oV6VUkBrhi2
 const GATEWAY_QOS_ORACLE: &str = "QmZmb6z87QmqBLmkMhaqWy7h2GLF1ey8Qj7YSRuqSGMjeH";
 
 // SERVER_INSTRUCTIONS (Full instructions needed here)
-const SERVER_INSTRUCTIONS: &str =  "**Interacting with The Graph Subgraphs **
-
-**Core Principle: Search First, Identify, Execute.** Always prioritize finding the target Subgraph ID, Deployment ID, or IPFS Hash via direct web search.
-
-**Standard Workflow (Default for ALL requests unless specified otherwise):**
-
+const SERVER_INSTRUCTIONS: &str = "**Interacting with The Graph Subgraphs**
+**IMPORTANT: ALWAYS verify query volumes using `get_deployment_30day_query_counts` for any potential subgraph candidate *before* selecting or querying it. This step is NON-OPTIONAL. Failure to do so may result in using outdated or irrelevant data.**
+**Follow this sequence strictly:**
 1.  **Analyze User Request:**
-    *   Identify the **protocol name** (e.g., \"Uniswap\", \"Aave\", \"ENS\").
-    *   Determine the **version** (default to latest if unspecified, e.g., \"v3\" for Uniswap).
-    *   Identify the **blockchain network** (ask if unclear; use 'ethereum' for Mainnet in search, 'arbitrum-one', etc.).
-    *   Determine the **goal**: Query data? Get schema? Look up info *about* an address (e.g., find ENS name for `0x...`)?
+   *   Identify the **protocol name** (e.g., \"Uniswap\", \"Aave\", \"ENS\").
+   *   Note any specific **version** or **blockchain network** mentioned by the user.
+   *   Determine the **goal**: Query data? Get schema?
+2.  **Initial Search & Preliminary Analysis:**
+   *   Use `search_subgraphs_by_keyword` with the most generic term for the protocol (e.g., if \"Uniswap v3 on Ethereum\", initially search only for \"Uniswap\").
+   *   Examine `displayName` and other metadata in the search results for version and network information.
+3.  **Mandatory Query Volume Check & Clarification (If Needed):**
+   *   **ALWAYS** extract the IPFS hashes (`ipfsHash`) for all potentially relevant subgraphs identified in Step 2.
+   *   **ALWAYS** use `get_deployment_30day_query_counts` for these IPFS hashes.
+   *   **If Ambiguous (Multiple Versions/Chains with significant volume):**
+       *   Present a summary to the user, **including the 30-day query counts for each option**. For example: \"I found several Uniswap subgraphs. Uniswap v3 on Ethereum is the most active (X queries last 30 days). I also see Uniswap v2 on Ethereum (Y queries) and Uniswap v3 on Arbitrum (Z queries). Which specific version and network are you interested in?\"
+   *   **If Still Unclear (Information Missing and Not Inferable even with query volumes):**
+       *   If version/chain information is genuinely missing from search results and user input, and query volumes don't offer a clear path (e.g. all relevant subgraphs have very low or no volume), ask for clarification directly. Example: \"I found several subgraphs for 'ExampleProtocol', but none have significant query activity. Could you please specify the version and blockchain network you're interested in?\"
+   *   **Do NOT proceed to Step 4 without completing this query volume verification.**
+4.  **Select Final Subgraph (Post Query Volume Check & Clarification):**
+   *   After the keyword search, mandatory query volume check, and any necessary clarification, you should have a clear target protocol, version, and network.
+   *   Identify all candidate subgraphs from your Step 2 `search_subgraphs_by_keyword` results that match these clarified criteria.
+   *   **If there is more than one such matching subgraph:**
+       *   You should have already fetched their query counts in Step 3.
+       *   **Select the subgraph with the highest `total_query_count`** among them.
+   *   **If only one subgraph precisely matches the criteria**, that is your selected subgraph.
+   *   When presenting your chosen subgraph or asking for final confirmation before querying, **ALWAYS state its 30-day query volume** to demonstrate this check has been performed. For example: \"I've selected the 'Uniswap v3 Ethereum' subgraph, which has X queries in the last 30 days. Shall I proceed to get its schema?\"
+   *   If the selected subgraph's query count is very low (and this wasn't already discussed during clarification), briefly inform the user.
+5.  **Execute Action Using the Identified Subgraph:**
+   *   **Identify the ID Type:** (Subgraph ID, Deployment ID, or IPFS Hash - note that `search_subgraphs_by_keyword` returns `id` for Subgraph ID and `ipfsHash` for current deployment's IPFS hash).
+   *   **Determine the Correct Tool based on Goal & ID Type:**
+       *   **Goal: Query Data**
+           *   Subgraph ID (`id` from search) → `execute_query_by_subgraph_id`
+           *   Deployment ID / IPFS Hash (`ipfsHash` from search) → `execute_query_by_deployment_id`
+       *   **Goal: Get Schema**
+           *   Subgraph ID → `get_schema_by_subgraph_id`
+           *   Deployment ID → `get_schema_by_deployment_id`
+           *   IPFS Hash → `get_schema_by_ipfs_hash`
+   *   **Write Clean GraphQL Queries:** Simple structure, omit 'variables' if unused, include only essential fields.
+**Special Case: Contract Address Lookup**
+*   ONLY when a user explicitly provides a **contract address** (0x...) AND asks for subgraphs related to it:
+    *   Identify the blockchain network for the address (ask user if unclear).
+    *   Use `get_top_subgraph_deployments` with the provided contract address and chain name.
+    *   Process and use the resulting deployment IDs as needed. **Crucially, before using any of these deployment IDs for querying, first use `get_deployment_30day_query_counts` with their IPFS hashes (which are the deployment IDs themselves in this context) to verify activity.**
+**ID Type Reference:**
+*   **Subgraph ID**: Typically starts with digits and letters (e.g., 5zvR82...)
+*   **Deployment ID / IPFS Hash**: For the purpose of `get_deployment_30day_query_counts`, the 'IPFS Hash' (Qm...) or 'Deployment ID' (0x...) can be used. Note `search_subgraphs_by_keyword` returns `ipfsHash`. `get_top_subgraph_deployments` returns `id` which is the Deployment ID (0x...).
 
-2.  **Perform Targeted Web Search (Primary Method):**
-    *   Construct search queries using `site:thegraph.com` or `site:graphseer.com`.
-    *   **Include:** Protocol name, version, and network. Add keywords like \"subgraph\", \"deployment id\", or \"subgraph id\".
-    *   **Examples:**
-        *   `site:thegraph.com Uniswap v3 subgraph ethereum subgraph id`
-        *   `site:thegraph.com ENS subgraph ethereum subgraph id`
-        *   `site:thegraph.comAave v2 subgraph arbitrum-one subgraph id`
-    *   **Goal:** Find a **Subgraph ID** (e.g., `5zvR82...`), **Deployment ID** (e.g., `0x...`, 66 chars), or **IPFS Hash** (e.g., `Qm...`) directly from search results. Prioritize finding the Subgraph ID if available, as it targets the latest version.
-    *   **Note:** If you find more than one result, prioritize the one with the most queries and signal. 
-    
-3.  **If Identifier Found via Search:**
-    *   Proceed directly to **Step 5: Execute Action**.
-
-4.  **If Search Fails or is Ambiguous:**
-    *   Perform preliminary web searches *without* `site:` to clarify protocol version or chain if unsure.
-    *   Re-attempt the targeted search (Step 2) with clarified information.
-    *   If still unsuccessful after retries, ask the user for clarification (e.g., \"Which version of Uniswap?\", \"Which network is that Aave deployment on?\", \"Could you provide the Subgraph ID?\").
-    *   **Crucially: Do NOT fall back to finding the protocol's contract address to then use `get_top_subgraph_deployments`.** This tool is reserved for the specific workflow below.
-
-5.  **Execute Action (Using Identifier Found via Search or Provided Directly):**
-    a.  **Identify the Identifier Type:** Subgraph ID, Deployment ID, or IPFS Hash.
-    b.  **Determine the Correct Tool based on Goal & Identifier:**
-        *   **Goal: Query Data**
-            *   Subgraph ID -> `execute_query_by_subgraph_id`
-            *   Deployment ID / IPFS Hash -> `execute_query_by_deployment_id`
-        *   **Goal: Get Schema**
-            *   Subgraph ID -> `get_schema_by_subgraph_id`
-            *   Deployment ID -> `get_schema_by_deployment_id`
-            *   IPFS Hash -> `get_schema_by_ipfs_hash`
-        *   **Goal: Address Lookup (e.g., ENS name for `0xABC...`)**
-            *   Use the identifier found via search (e.g., the ENS Subgraph ID).
-            *   Use the appropriate query tool (`execute_query_by_subgraph_id` or `_by_deployment_id`).
-            *   **Include the user's original address (`0xABC...`) within the GraphQL query's variables or filters.** (e.g., `query GetENS($addr: Bytes!) { domains(where: { owner: $addr }) { name } }`, variables: `{\"addr\": \"0xABC...\"}`)
-    c.  **Write Clean GraphQL Queries:** Simple structure, omit 'variables' if unused, include only essential fields.
-
-**Specific Workflow (ONLY when User Provides a Contract Address to Find *Its* Subgraphs):**
-
-1.  **Verify Trigger:** Confirm the user explicitly provided a **Contract Address** (`0x...`, typically 42 chars) AND asked a question like \"Which subgraphs index this contract?\" or \"Find subgraphs related to `0x123...`\".
-2.  **Identify Chain:** Determine the blockchain network for the contract address (ask user if unknown, try common ones like 'mainnet', 'arbitrum-one', 'polygon', 'optimism', 'base'). Use 'mainnet' for Ethereum, etc., for the tool parameter.
-3.  **Use `get_top_subgraph_deployments`:**
-    *   Call the tool with the **user-provided contract address** and the identified **chain**.
-    *   This tool specifically finds *deployments* that index the *given contract address*.
-4.  **Process Results:**
-    *   The tool returns a list of **Deployment IDs**.
-    *   Use these Deployment IDs with `get_schema_by_deployment_id` or `execute_query_by_deployment_id` as needed for the user's follow-up request.
-
-**Key Reminders & Best Practices:**
-
-*   **SEARCH FIRST:** This is the default. Only deviate if the user explicitly provides a contract address and asks about *its* indexing subgraphs.
-*   **`get_top_subgraph_deployments` is Specific:** Use it *only* for the \"Specific Workflow\" above, triggered by a user-provided contract address. **Do not use it after finding a protocol's contract address via search.**
-*   **Identifier Distinction:** Crucial for selecting the right tool. Review types (Subgraph ID, Deployment ID, IPFS Hash, Contract Address) if unsure.
-*   **Chain Names:** 'mainnet' (for Ethereum), 'arbitrum-one', etc., for the `chain` parameter in `get_top_subgraph_deployments`. Use 'ethereum', 'arbitrum-one', etc., in *search queries*.
-*   **No Hardcoding:** Discover identifiers via search; don't use memorized ones unless provided by the user *in the current turn*.
-*   **Latest Versions/Clarification:** Default to latest protocol versions; ask user if ambiguity arises.
-*   **Clean Queries:** Keep GraphQL minimal and focused.";
+**Best Practices:**
+*   When using GraphQL, if unsure about the structure, first get the schema to understand available entities and fields.
+*   Create focused queries that only request necessary fields.
+*   For paginated data, use appropriate limit parameters.
+*   Use variables for dynamic values in queries.";
 
 #[derive(Debug, Error)]
 enum SubgraphError {
@@ -164,9 +149,9 @@ pub struct GetTopSubgraphDeploymentsRequest {
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct GetDeployment30DayQueryCountsRequest {
     #[schemars(
-        description = "List of deployment IDs (Qm...) to get query counts for the last 30 days"
+        description = "List of IPFS hashes (Qm...) to get query counts for the last 30 days"
     )]
-    pub deployment_ids: Vec<String>,
+    pub ipfs_hashes: Vec<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -762,7 +747,7 @@ impl SubgraphServer {
 
     async fn get_deployment_30day_query_counts_internal(
         &self,
-        deployment_ids: &[String],
+        ipfs_hashes: &[String],
     ) -> Result<serde_json::Value, SubgraphError> {
         let api_key = self.get_api_key()?;
         let url = format!(
@@ -798,7 +783,7 @@ impl SubgraphServer {
         "#;
 
         let variables = serde_json::json!({
-            "deploymentIDs": deployment_ids,
+            "deploymentIDs": ipfs_hashes,
             "thirtyDaysAgoTimestamp": thirty_days_ago.to_string()
         });
 
@@ -862,7 +847,7 @@ impl SubgraphServer {
             }
 
             query_counts.push(serde_json::json!({
-                "deployment_id": id,
+                "ipfs_hash": id,
                 "total_query_count": total_query_count,
                 "data_points_count": data_points.len()
             }));
@@ -894,11 +879,11 @@ impl SubgraphServer {
         &self,
         #[tool(aggr)]
         #[schemars(
-            description = "Request containing a list of deployment IDs to get 30-day query counts for"
+            description = "Request containing a list of IPFS hashes to get 30-day query counts for"
         )]
-        GetDeployment30DayQueryCountsRequest { deployment_ids }: GetDeployment30DayQueryCountsRequest,
+        GetDeployment30DayQueryCountsRequest { ipfs_hashes }: GetDeployment30DayQueryCountsRequest,
     ) -> Result<CallToolResult, McpError> {
-        match self.get_deployment_30day_query_counts_internal(&deployment_ids).await {
+        match self.get_deployment_30day_query_counts_internal(&ipfs_hashes).await {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "{:#}",
                 result
