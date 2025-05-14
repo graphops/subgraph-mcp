@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Result;
-use log::{error, info};
 use reqwest::Client;
 use rmcp::{
     model::*,
@@ -15,13 +14,16 @@ use serde_json::json;
 use std::{
     env,
     net::SocketAddr,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 
+use http::HeaderMap;
+use rmcp::handler::server::tool::{FromToolCallContextPart, ToolCallContext};
 use rmcp::ServiceExt;
 use tokio::io;
 use tokio_util::sync::CancellationToken;
+use tracing::{error, info};
 
 const GATEWAY_URL: &str = "https://gateway.thegraph.com/api";
 const GRAPH_NETWORK_SUBGRAPH_ARBITRUM: &str = "QmdKXcBUHR3UyURqVRQHu1oV6VUkBrhi2vNvMx3bNDnUCc";
@@ -175,6 +177,22 @@ impl Default for SubgraphServer {
     }
 }
 
+#[derive(Debug)]
+pub struct HttpRequestHeaders(pub Option<HeaderMap>);
+
+impl<'a, S> FromToolCallContextPart<'a, S> for HttpRequestHeaders {
+    fn from_tool_call_context_part(
+        context: ToolCallContext<'a, S>,
+    ) -> Result<(Self, ToolCallContext<'a, S>), rmcp::Error> {
+        let headers_opt = context
+            .request_context()
+            .extensions
+            .get::<HeaderMap>()
+            .cloned();
+        Ok((HttpRequestHeaders(headers_opt), context))
+    }
+}
+
 #[tool(tool_box)]
 impl SubgraphServer {
     pub fn new() -> Self {
@@ -183,7 +201,20 @@ impl SubgraphServer {
         }
     }
 
-    fn get_api_key(&self) -> Result<String, SubgraphError> {
+    // Helper function to extract API key from Authorization header or environment variable
+    fn get_api_key(&self, headers_opt: Option<&HeaderMap>) -> Result<String, SubgraphError> {
+        if let Some(actual_headers) = headers_opt {
+            if let Some(auth_header_value) = actual_headers.get(http::header::AUTHORIZATION) {
+                tracing::debug!(target: "mcp_tool_auth", ?auth_header_value, "Found Authorization header value");
+                if let Ok(auth_str) = auth_header_value.to_str() {
+                    if let Some(token_part) = auth_str.strip_prefix("Bearer ") {
+                        if !token_part.is_empty() {
+                            return Ok(token_part.to_string());
+                        }
+                    }
+                }
+            }
+        }
         env::var("GATEWAY_API_KEY").map_err(|_| SubgraphError::ApiKeyNotSet)
     }
 
@@ -203,10 +234,10 @@ impl SubgraphServer {
 
     async fn get_schema_by_deployment_id_internal(
         &self,
+        api_key: &str,
         deployment_id: &str,
     ) -> Result<String, SubgraphError> {
-        let api_key = self.get_api_key()?;
-        let url = self.get_network_subgraph_query_url(&api_key);
+        let url = self.get_network_subgraph_query_url(api_key);
 
         let query = r#"
         query SubgraphDeploymentSchema($id: String!) {
@@ -263,10 +294,10 @@ impl SubgraphServer {
 
     async fn get_schema_by_subgraph_id_internal(
         &self,
+        api_key: &str,
         subgraph_id: &str,
     ) -> Result<String, SubgraphError> {
-        let api_key = self.get_api_key()?;
-        let url = self.get_network_subgraph_query_url(&api_key);
+        let url = self.get_network_subgraph_query_url(api_key);
 
         let query = r#"
         query SubgraphSchema($id: String!) {
@@ -325,10 +356,10 @@ impl SubgraphServer {
 
     async fn get_schema_by_ipfs_hash_internal(
         &self,
+        api_key: &str,
         ipfs_hash: &str,
     ) -> Result<String, SubgraphError> {
-        let api_key = self.get_api_key()?;
-        let url = self.get_network_subgraph_query_url(&api_key);
+        let url = self.get_network_subgraph_query_url(api_key);
 
         let query = r#"
         query DeploymentSchemaByIpfsHash($hash: String!) {
@@ -382,12 +413,12 @@ impl SubgraphServer {
 
     async fn execute_query_on_endpoint(
         &self,
+        api_key: &str,
         endpoint_type: &str,
         id: &str,
         query: &str,
         variables: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, SubgraphError> {
-        let api_key = self.get_api_key()?;
         let url = format!("{}/{}/{}/{}", GATEWAY_URL, api_key, endpoint_type, id);
 
         let mut request_body = serde_json::json!({
@@ -398,7 +429,7 @@ impl SubgraphServer {
             request_body["variables"] = vars;
         }
 
-        let response = self
+        let response_val = self
             .http_client
             .post(&url)
             .json(&request_body)
@@ -407,16 +438,31 @@ impl SubgraphServer {
             .json::<serde_json::Value>()
             .await?;
 
-        Ok(response)
+        // Check for GraphQL errors in the JSON response
+        if let Some(errors_val) = response_val.get("errors") {
+            if let Some(errors_arr) = errors_val.as_array() {
+                if !errors_arr.is_empty() {
+                    if let Some(first_error) = errors_arr[0].get("message").and_then(|m| m.as_str())
+                    {
+                        return Err(SubgraphError::GraphQlError(first_error.to_string()));
+                    } else {
+                        return Err(SubgraphError::GraphQlError(
+                            "Received GraphQL errors without a message.".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(response_val)
     }
 
     async fn get_top_subgraph_deployments_internal(
         &self,
+        api_key: &str,
         contract_address: &str,
         chain: &str,
     ) -> Result<serde_json::Value, SubgraphError> {
-        let api_key = self.get_api_key()?;
-        let url = self.get_network_subgraph_query_url(&api_key);
+        let url = self.get_network_subgraph_query_url(api_key);
 
         let query = r#"
         query TopSubgraphDeploymentsForContract($network: String!, $contractAddress: String!) {
@@ -469,10 +515,10 @@ impl SubgraphServer {
 
     async fn search_subgraphs_by_keyword_internal(
         &self,
+        api_key: &str,
         keyword: &str,
     ) -> Result<serde_json::Value, SubgraphError> {
-        let api_key = self.get_api_key()?;
-        let url = self.get_network_subgraph_query_url(&api_key);
+        let url = self.get_network_subgraph_query_url(api_key);
 
         let query = r#"
         query SearchSubgraphsByKeyword($keyword: String!) {
@@ -523,233 +569,29 @@ impl SubgraphServer {
             SubgraphError::GraphQlError("No data returned from the GraphQL API".to_string())
         })?;
 
-        // Process the results based on the requirements
-        if let Some(subgraphs) = data.get("subgraphs").and_then(|s| s.as_array()) {
-            let total_count = subgraphs.len();
-
-            // Determine how many results to return
+        if let Some(subgraphs_arr) = data.get("subgraphs").and_then(|s| s.as_array()) {
+            let total_count = subgraphs_arr.len();
             let limit = if total_count <= 100 {
-                10 // Return top 10 if total is <= 100
+                10
             } else {
-                // Return square root of total if > 100
                 (total_count as f64).sqrt().ceil() as usize
             };
-
-            // Create a new limited result
-            let limited_subgraphs = subgraphs.iter().take(limit).collect::<Vec<_>>();
-
-            // Build the result JSON
-            let result = serde_json::json!({
+            let limited_subgraphs: Vec<serde_json::Value> =
+                subgraphs_arr.iter().take(limit).cloned().collect();
+            return Ok(json!({
                 "subgraphs": limited_subgraphs,
                 "total": total_count,
-                "returned": limited_subgraphs.len(),
-            });
-
-            return Ok(result);
+                "returned": limited_subgraphs.len()
+            }));
         }
-
         Ok(data)
-    }
-
-    fn _create_resource_text(&self, uri: &str, name: &str) -> Resource {
-        RawResource::new(uri, name.to_string()).no_annotation()
-    }
-
-    #[tool(
-        description = "Get schema for a specific subgraph deployment using its deployment ID (0x...)."
-    )]
-    async fn get_schema_by_deployment_id(
-        &self,
-        #[tool(aggr)]
-        GetSchemaByDeploymentIdRequest { deployment_id }: GetSchemaByDeploymentIdRequest,
-    ) -> Result<CallToolResult, McpError> {
-        match self
-            .get_schema_by_deployment_id_internal(&deployment_id)
-            .await
-        {
-            Ok(schema) => Ok(CallToolResult::success(vec![Content::text(schema)])),
-            Err(e) => match e {
-                SubgraphError::ApiKeyNotSet => Err(McpError::invalid_params(
-                    "Configuration error: API key not set. Please set the GATEWAY_API_KEY environment variable.",
-                    None,
-                )),
-                _ => Err(McpError::internal_error(
-                    e.to_string(),
-                    Some(json!({ "details": e.to_string() })),
-                )),
-            }
-        }
-    }
-
-    #[tool(
-        description = "Get the schema for the current version of a subgraph using its subgraph ID (e.g., 5zvR82...)."
-    )]
-    async fn get_schema_by_subgraph_id(
-        &self,
-        #[tool(aggr)] GetSchemaBySubgraphIdRequest { subgraph_id }: GetSchemaBySubgraphIdRequest,
-    ) -> Result<CallToolResult, McpError> {
-        match self.get_schema_by_subgraph_id_internal(&subgraph_id).await {
-            Ok(schema) => Ok(CallToolResult::success(vec![Content::text(schema)])),
-            Err(e) => match e {
-                SubgraphError::ApiKeyNotSet => Err(McpError::invalid_params(
-                    "Configuration error: API key not set. Please set the GATEWAY_API_KEY environment variable.",
-                    None,
-                )),
-                _ => Err(McpError::internal_error(
-                    e.to_string(),
-                    Some(json!({ "details": e.to_string() })),
-                )),
-            }
-        }
-    }
-
-    #[tool(
-        description = "Get schema for a specific subgraph deployment using its IPFS hash (Qm...)."
-    )]
-    async fn get_schema_by_ipfs_hash(
-        &self,
-        #[tool(aggr)] GetSchemaByIpfsHashRequest { ipfs_hash }: GetSchemaByIpfsHashRequest,
-    ) -> Result<CallToolResult, McpError> {
-        match self.get_schema_by_ipfs_hash_internal(&ipfs_hash).await {
-            Ok(schema) => Ok(CallToolResult::success(vec![Content::text(schema)])),
-            Err(e) => match e {
-                SubgraphError::ApiKeyNotSet => Err(McpError::invalid_params(
-                    "Configuration error: API key not set. Please set the GATEWAY_API_KEY environment variable.",
-                    None,
-                )),
-                _ => Err(McpError::internal_error(
-                    e.to_string(),
-                    Some(json!({ "details": e.to_string() })),
-                )),
-            }
-        }
-    }
-
-    #[tool(description = "Execute a GraphQL query against a specific deployment ID or IPFS hash.")]
-    async fn execute_query_by_deployment_id(
-        &self,
-        #[tool(aggr)] ExecuteQueryByDeploymentIdRequest {
-            deployment_id,
-            query,
-            variables,
-        }: ExecuteQueryByDeploymentIdRequest,
-    ) -> Result<CallToolResult, McpError> {
-        match self
-            .execute_query_on_endpoint("deployments/id", &deployment_id, &query, variables)
-            .await
-        {
-            Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
-                "{:#}",
-                result
-            ))])),
-             Err(e) => match e {
-                SubgraphError::ApiKeyNotSet => Err(McpError::invalid_params(
-                    "Configuration error: API key not set. Please set the GATEWAY_API_KEY environment variable.",
-                    None,
-                )),
-                _ => Err(McpError::internal_error(
-                    e.to_string(),
-                    Some(json!({ "details": e.to_string() })),
-                )),
-            }
-        }
-    }
-
-    #[tool(description = "Execute a GraphQL query against the latest deployment of a subgraph ID.")]
-    async fn execute_query_by_subgraph_id(
-        &self,
-        #[tool(aggr)] ExecuteQueryBySubgraphIdRequest {
-            subgraph_id,
-            query,
-            variables,
-        }: ExecuteQueryBySubgraphIdRequest,
-    ) -> Result<CallToolResult, McpError> {
-        match self
-            .execute_query_on_endpoint("subgraphs/id", &subgraph_id, &query, variables)
-            .await
-        {
-            Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
-                "{:#}",
-                result
-            ))])),
-             Err(e) => match e {
-                SubgraphError::ApiKeyNotSet => Err(McpError::invalid_params(
-                    "Configuration error: API key not set. Please set the GATEWAY_API_KEY environment variable.",
-                    None,
-                )),
-                _ => Err(McpError::internal_error(
-                    e.to_string(),
-                    Some(json!({ "details": e.to_string() })),
-                )),
-            }
-        }
-    }
-
-    #[tool(
-        description = "Get the top 3 subgraph deployments for a given contract address and chain, ordered by query fees. For chain, use 'mainnet' for Ethereum mainnet, NEVER use 'ethereum'."
-    )]
-    async fn get_top_subgraph_deployments(
-        &self,
-        #[tool(aggr)]
-        #[schemars(description = "Request containing the contract address and chain name")]
-        GetTopSubgraphDeploymentsRequest {
-            contract_address,
-            chain,
-        }: GetTopSubgraphDeploymentsRequest,
-    ) -> Result<CallToolResult, McpError> {
-        match self
-            .get_top_subgraph_deployments_internal(&contract_address, &chain)
-            .await
-        {
-            Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
-                "{:#}",
-                result
-            ))])),
-             Err(e) => match e {
-                SubgraphError::ApiKeyNotSet => Err(McpError::invalid_params(
-                    "Configuration error: API key not set. Please set the GATEWAY_API_KEY environment variable.",
-                    None,
-                )),
-                _ => Err(McpError::internal_error(
-                    e.to_string(),
-                    Some(json!({ "details": e.to_string() })),
-                )),
-            }
-        }
-    }
-
-    #[tool(
-        description = "Search for subgraphs by keyword in their display names, ordered by signal. Returns top 10 results if total results ≤ 100, or square root of total otherwise."
-    )]
-    async fn search_subgraphs_by_keyword(
-        &self,
-        #[tool(aggr)]
-        #[schemars(description = "Request containing the keyword to search for in subgraph names")]
-        SearchSubgraphsByKeywordRequest { keyword }: SearchSubgraphsByKeywordRequest,
-    ) -> Result<CallToolResult, McpError> {
-        match self.search_subgraphs_by_keyword_internal(&keyword).await {
-            Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
-                "{:#}",
-                result
-            ))])),
-            Err(e) => match e {
-                SubgraphError::ApiKeyNotSet => Err(McpError::invalid_params(
-                    "Configuration error: API key not set. Please set the GATEWAY_API_KEY environment variable.",
-                    None,
-                )),
-                _ => Err(McpError::internal_error(
-                    e.to_string(),
-                    Some(json!({ "details": e.to_string() })),
-                )),
-            }
-        }
     }
 
     async fn get_deployment_30day_query_counts_internal(
         &self,
+        api_key: &str,
         ipfs_hashes: &[String],
     ) -> Result<serde_json::Value, SubgraphError> {
-        let api_key = self.get_api_key()?;
         let url = format!(
             "{}/{}/deployments/id/{}",
             GATEWAY_URL, api_key, GATEWAY_QOS_ORACLE
@@ -773,10 +615,10 @@ impl SubgraphServer {
               where: { dayStart_gte: $thirtyDaysAgoTimestamp }
               orderBy: dayStart
               orderDirection: asc
-              first: 31 # Max ~30 daily entries for 30 days
+              first: 31
             ) {
               query_count
-              dayStart # For verification/debugging
+              dayStart
             }
           }
         }
@@ -787,10 +629,7 @@ impl SubgraphServer {
             "thirtyDaysAgoTimestamp": thirty_days_ago.to_string()
         });
 
-        let request_body = serde_json::json!({
-            "query": query,
-            "variables": variables
-        });
+        let request_body = serde_json::json!({ "query": query, "variables": variables });
 
         let response = self
             .http_client
@@ -811,65 +650,362 @@ impl SubgraphServer {
             SubgraphError::GraphQlError("No data returned from the GraphQL API".to_string())
         })?;
 
-        // Process the results to aggregate counts
         let deployments = data
             .get("subgraphDeployments")
             .and_then(|d| d.as_array())
-            .ok_or_else(|| SubgraphError::GraphQlError("Unexpected response format".to_string()))?;
+            .ok_or_else(|| {
+                SubgraphError::GraphQlError(
+                    "Unexpected response format for deployments".to_string(),
+                )
+            })?;
 
-        let mut query_counts: Vec<serde_json::Value> = Vec::new();
-
-        for deployment in deployments {
-            let id = deployment
+        let mut query_counts_results: Vec<serde_json::Value> = Vec::new();
+        for deployment_data in deployments {
+            let id = deployment_data
                 .get("id")
-                .and_then(|id| id.as_str())
+                .and_then(|id_val| id_val.as_str())
                 .ok_or_else(|| {
                     SubgraphError::GraphQlError("Missing deployment ID in response".to_string())
                 })?;
-
-            let data_points = deployment
+            let data_points = deployment_data
                 .get("queryDailyDataPoints")
-                .and_then(|points| points.as_array())
+                .and_then(|dp| dp.as_array())
                 .ok_or_else(|| {
                     SubgraphError::GraphQlError("Missing data points in response".to_string())
                 })?;
 
-            let mut total_query_count: i64 = 0;
-            for point in data_points {
-                let count = point
-                    .get("query_count")
-                    .and_then(|c| c.as_str())
-                    .ok_or_else(|| {
-                        SubgraphError::GraphQlError("Missing query count in data point".to_string())
-                    })?;
+            let total_query_count: i64 = data_points
+                .iter()
+                .filter_map(|point| {
+                    point
+                        .get("query_count")
+                        .and_then(|qc| qc.as_str())
+                        .and_then(|s| s.parse::<i64>().ok())
+                })
+                .sum();
 
-                total_query_count += count.parse::<i64>().unwrap_or(0);
-            }
-
-            query_counts.push(serde_json::json!({
+            query_counts_results.push(json!({
                 "ipfs_hash": id,
                 "total_query_count": total_query_count,
                 "data_points_count": data_points.len()
             }));
         }
 
-        // Sort by query count in descending order
-        query_counts.sort_by(|a, b| {
-            let count_a = a
-                .get("total_query_count")
-                .and_then(|c| c.as_i64())
-                .unwrap_or(0);
-            let count_b = b
-                .get("total_query_count")
-                .and_then(|c| c.as_i64())
-                .unwrap_or(0);
-            count_b.cmp(&count_a)
+        query_counts_results.sort_by(|a, b| {
+            let count_a = a["total_query_count"].as_i64().unwrap_or(0);
+            let count_b = b["total_query_count"].as_i64().unwrap_or(0);
+            count_b.cmp(&count_a) // Sort descending
         });
 
-        Ok(serde_json::json!({
-            "deployments": query_counts,
-            "total_deployments": query_counts.len()
+        Ok(json!({
+            "deployments": query_counts_results,
+            "total_deployments_processed": query_counts_results.len()
         }))
+    }
+
+    fn _create_resource_text(&self, uri: &str, name: &str) -> Resource {
+        RawResource::new(uri, name.to_string()).no_annotation()
+    }
+
+    #[tool(
+        description = "Get schema for a specific subgraph deployment using its deployment ID (0x...)."
+    )]
+    async fn get_schema_by_deployment_id(
+        &self,
+        headers: HttpRequestHeaders,
+        #[tool(aggr)]
+        GetSchemaByDeploymentIdRequest { deployment_id }: GetSchemaByDeploymentIdRequest,
+    ) -> Result<CallToolResult, McpError> {
+        match self.get_api_key(headers.0.as_ref()) {
+            Ok(api_key) => {
+                match self
+                    .get_schema_by_deployment_id_internal(&api_key, &deployment_id)
+                    .await
+                {
+                    Ok(schema) => Ok(CallToolResult::success(vec![Content::text(schema)])),
+                    Err(e) => match e {
+                        SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
+                            e.to_string(),
+                            Some(json!({ "details": e.to_string() })),
+                        )),
+                        _ => Err(McpError::internal_error(
+                            format!("Unexpected error during schema retrieval: {}", e),
+                            Some(json!({ "details": e.to_string()})),
+                        )),
+                    },
+                }
+            }
+            Err(SubgraphError::ApiKeyNotSet) => Err(McpError::invalid_params(
+                "Configuration error: API key not found. Please set the GATEWAY_API_KEY environment variable or provide a Bearer token in the Authorization header.",
+                None,
+            )),
+            Err(e) => Err(McpError::internal_error( // Catchall for other SubgraphErrors from get_api_key
+                format!("Error retrieving API key: {}", e),
+                Some(json!({ "details": e.to_string() })),
+            )),
+        }
+    }
+
+    #[tool(
+        description = "Get the schema for the current version of a subgraph using its subgraph ID (e.g., 5zvR82...)."
+    )]
+    async fn get_schema_by_subgraph_id(
+        &self,
+        headers: HttpRequestHeaders,
+        #[tool(aggr)] GetSchemaBySubgraphIdRequest { subgraph_id }: GetSchemaBySubgraphIdRequest,
+    ) -> Result<CallToolResult, McpError> {
+        match self.get_api_key(headers.0.as_ref()) {
+            Ok(api_key) => {
+                match self
+                    .get_schema_by_subgraph_id_internal(&api_key, &subgraph_id)
+                    .await
+                {
+                    Ok(schema_string) => {
+                        tracing::info!(target: "mcp_tool_auth", subgraph_id = %subgraph_id, "Internal function call successful.");
+                        Ok(CallToolResult::success(vec![Content::text(schema_string)]))
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            target: "mcp_tool_auth",
+                            subgraph_id = %subgraph_id,
+                            error = %e,
+                            "Internal function call failed."
+                        );
+                        match e {
+                            SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
+                                e.to_string(),
+                                Some(json!({ "details": e.to_string() })),
+                            )),
+                            _ => Err(McpError::internal_error(
+                                format!("Unexpected error during schema retrieval by subgraph ID: {}",e),
+                                Some(json!({ "details": e.to_string()})),
+                            )),
+                        }
+                    }
+                }
+            }
+            Err(SubgraphError::ApiKeyNotSet) => Err(McpError::invalid_params(
+                "Configuration error: API key not found. Please set the GATEWAY_API_KEY environment variable or provide a Bearer token in the Authorization header.",
+                None,
+            )),
+            Err(e) => Err(McpError::internal_error(
+                format!("Error retrieving API key: {}", e),
+                Some(json!({ "details": e.to_string() })),
+            )),
+        }
+    }
+
+    #[tool(
+        description = "Get schema for a specific subgraph deployment using its IPFS hash (Qm...)."
+    )]
+    async fn get_schema_by_ipfs_hash(
+        &self,
+        headers: HttpRequestHeaders,
+        #[tool(aggr)] GetSchemaByIpfsHashRequest { ipfs_hash }: GetSchemaByIpfsHashRequest,
+    ) -> Result<CallToolResult, McpError> {
+        match self.get_api_key(headers.0.as_ref()) {
+            Ok(api_key) => {
+                match self
+                    .get_schema_by_ipfs_hash_internal(&api_key, &ipfs_hash)
+                    .await
+                {
+                    Ok(schema) => Ok(CallToolResult::success(vec![Content::text(schema)])),
+                    Err(e) => match e {
+                        SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
+                            e.to_string(),
+                            Some(json!({ "details": e.to_string() })),
+                        )),
+                        _ => Err(McpError::internal_error(
+                            format!("Unexpected error during schema retrieval by IPFS hash: {}",e),
+                            Some(json!({ "details": e.to_string()})),
+                        )),
+                    },
+                }
+            }
+            Err(SubgraphError::ApiKeyNotSet) => Err(McpError::invalid_params(
+                 "Configuration error: API key not found. Please set the GATEWAY_API_KEY environment variable or provide a Bearer token in the Authorization header.",
+                None,
+            )),
+            Err(e) => Err(McpError::internal_error(
+                format!("Error retrieving API key: {}", e),
+                Some(json!({ "details": e.to_string() })),
+            )),
+        }
+    }
+
+    #[tool(description = "Execute a GraphQL query against a specific deployment ID or IPFS hash.")]
+    async fn execute_query_by_deployment_id(
+        &self,
+        headers: HttpRequestHeaders,
+        #[tool(aggr)] ExecuteQueryByDeploymentIdRequest {
+            deployment_id,
+            query,
+            variables,
+        }: ExecuteQueryByDeploymentIdRequest,
+    ) -> Result<CallToolResult, McpError> {
+        match self.get_api_key(headers.0.as_ref()) {
+            Ok(api_key) => {
+                match self
+                    .execute_query_on_endpoint(&api_key, "deployments/id", &deployment_id, &query, variables)
+                    .await
+                {
+                    Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
+                        "{:#}",
+                        result
+                    ))])),
+                    Err(e) => match e {
+                        SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
+                            e.to_string(),
+                            Some(json!({ "details": e.to_string() })),
+                        )),
+                        _ => Err(McpError::internal_error(
+                            format!("Unexpected error during query execution by deployment ID: {}",e),
+                            Some(json!({ "details": e.to_string()})),
+                        )),
+                    },
+                }
+            }
+            Err(SubgraphError::ApiKeyNotSet) => Err(McpError::invalid_params(
+                 "Configuration error: API key not found. Please set the GATEWAY_API_KEY environment variable or provide a Bearer token in the Authorization header.",
+                None,
+            )),
+            Err(e) => Err(McpError::internal_error(
+                format!("Error retrieving API key: {}", e),
+                Some(json!({ "details": e.to_string() })),
+            )),
+        }
+    }
+
+    #[tool(description = "Execute a GraphQL query against the latest deployment of a subgraph ID.")]
+    async fn execute_query_by_subgraph_id(
+        &self,
+        headers: HttpRequestHeaders,
+        #[tool(aggr)] ExecuteQueryBySubgraphIdRequest {
+            subgraph_id,
+            query,
+            variables,
+        }: ExecuteQueryBySubgraphIdRequest,
+    ) -> Result<CallToolResult, McpError> {
+        match self.get_api_key(headers.0.as_ref()) {
+            Ok(api_key) => {
+                match self
+                    .execute_query_on_endpoint(&api_key, "subgraphs/id", &subgraph_id, &query, variables)
+                    .await
+                {
+                    Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
+                        "{:#}",
+                        result
+                    ))])),
+                    Err(e) => match e {
+                        SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
+                            e.to_string(),
+                            Some(json!({ "details": e.to_string() })),
+                        )),
+                        _ => Err(McpError::internal_error(
+                            format!("Unexpected error during query execution by subgraph ID: {}",e),
+                            Some(json!({ "details": e.to_string()})),
+                        )),
+                    },
+                }
+            }
+            Err(SubgraphError::ApiKeyNotSet) => Err(McpError::invalid_params(
+                 "Configuration error: API key not found. Please set the GATEWAY_API_KEY environment variable or provide a Bearer token in the Authorization header.",
+                None,
+            )),
+            Err(e) => Err(McpError::internal_error(
+                format!("Error retrieving API key: {}", e),
+                Some(json!({ "details": e.to_string() })),
+            )),
+        }
+    }
+
+    #[tool(
+        description = "Get the top 3 subgraph deployments for a given contract address and chain, ordered by query fees. For chain, use 'mainnet' for Ethereum mainnet, NEVER use 'ethereum'."
+    )]
+    async fn get_top_subgraph_deployments(
+        &self,
+        headers: HttpRequestHeaders,
+        #[tool(aggr)]
+        #[schemars(description = "Request containing the contract address and chain name")]
+        GetTopSubgraphDeploymentsRequest {
+            contract_address,
+            chain,
+        }: GetTopSubgraphDeploymentsRequest,
+    ) -> Result<CallToolResult, McpError> {
+        match self.get_api_key(headers.0.as_ref()) {
+            Ok(api_key) => {
+                match self
+                    .get_top_subgraph_deployments_internal(&api_key, &contract_address, &chain)
+                    .await
+                {
+                    Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
+                        "{:#}",
+                        result
+                    ))])),
+                    Err(e) => match e {
+                        SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
+                            e.to_string(),
+                            Some(json!({ "details": e.to_string() })),
+                        )),
+                        _ => Err(McpError::internal_error(
+                            format!("Unexpected error during top subgraph deployment retrieval: {}",e),
+                            Some(json!({ "details": e.to_string()})),
+                        )),
+                    },
+                }
+            }
+            Err(SubgraphError::ApiKeyNotSet) => Err(McpError::invalid_params(
+                 "Configuration error: API key not found. Please set the GATEWAY_API_KEY environment variable or provide a Bearer token in the Authorization header.",
+                None,
+            )),
+            Err(e) => Err(McpError::internal_error(
+                format!("Error retrieving API key: {}", e),
+                Some(json!({ "details": e.to_string() })),
+            )),
+        }
+    }
+
+    #[tool(
+        description = "Search for subgraphs by keyword in their display names, ordered by signal. Returns top 10 results if total results ≤ 100, or square root of total otherwise."
+    )]
+    async fn search_subgraphs_by_keyword(
+        &self,
+        headers: HttpRequestHeaders,
+        #[tool(aggr)]
+        #[schemars(description = "Request containing the keyword to search for in subgraph names")]
+        SearchSubgraphsByKeywordRequest { keyword }: SearchSubgraphsByKeywordRequest,
+    ) -> Result<CallToolResult, McpError> {
+        match self.get_api_key(headers.0.as_ref()) {
+            Ok(api_key) => {
+                match self
+                    .search_subgraphs_by_keyword_internal(&api_key, &keyword)
+                    .await
+                {
+                    Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
+                        "{:#}",
+                        result
+                    ))])),
+                    Err(e) => match e {
+                        SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
+                            e.to_string(),
+                            Some(json!({ "details": e.to_string() })),
+                        )),
+                        _ => Err(McpError::internal_error(
+                            format!("Unexpected error during subgraph search: {}", e),
+                            Some(json!({ "details": e.to_string()})),
+                        )),
+                    },
+                }
+            }
+            Err(SubgraphError::ApiKeyNotSet) => Err(McpError::invalid_params(
+                 "Configuration error: API key not found. Please set the GATEWAY_API_KEY environment variable or provide a Bearer token in the Authorization header.",
+                None,
+            )),
+            Err(e) => Err(McpError::internal_error(
+                format!("Error retrieving API key: {}", e),
+                Some(json!({ "details": e.to_string() })),
+            )),
+        }
     }
 
     #[tool(
@@ -877,27 +1013,43 @@ impl SubgraphServer {
     )]
     async fn get_deployment_30day_query_counts(
         &self,
+        headers: HttpRequestHeaders,
         #[tool(aggr)]
         #[schemars(
             description = "Request containing a list of IPFS hashes to get 30-day query counts for"
         )]
         GetDeployment30DayQueryCountsRequest { ipfs_hashes }: GetDeployment30DayQueryCountsRequest,
     ) -> Result<CallToolResult, McpError> {
-        match self.get_deployment_30day_query_counts_internal(&ipfs_hashes).await {
-            Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
-                "{:#}",
-                result
-            ))])),
-            Err(e) => match e {
-                SubgraphError::ApiKeyNotSet => Err(McpError::invalid_params(
-                    "Configuration error: API key not set. Please set the GATEWAY_API_KEY environment variable.",
-                    None,
-                )),
-                _ => Err(McpError::internal_error(
-                    e.to_string(),
-                    Some(json!({ "details": e.to_string() })),
-                )),
+        match self.get_api_key(headers.0.as_ref()) {
+            Ok(api_key) => {
+                match self
+                    .get_deployment_30day_query_counts_internal(&api_key, &ipfs_hashes)
+                    .await
+                {
+                    Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
+                        "{:#}",
+                        result
+                    ))])),
+                    Err(e) => match e {
+                         SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
+                            e.to_string(),
+                            Some(json!({ "details": e.to_string() })),
+                        )),
+                        _ => Err(McpError::internal_error(
+                            format!("Unexpected error during 30-day query count retrieval: {}",e),
+                            Some(json!({ "details": e.to_string()})),
+                        )),
+                    },
+                }
             }
+            Err(SubgraphError::ApiKeyNotSet) => Err(McpError::invalid_params(
+                 "Configuration error: API key not found. Please set the GATEWAY_API_KEY environment variable or provide a Bearer token in the Authorization header.",
+                None,
+            )),
+            Err(e) => Err(McpError::internal_error(
+                format!("Error retrieving API key: {}", e),
+                Some(json!({ "details": e.to_string() })),
+            )),
         }
     }
 }
@@ -919,7 +1071,7 @@ impl ServerHandler for SubgraphServer {
 
     async fn list_resources(
         &self,
-        _request: PaginatedRequestParam,
+        _request: Option<PaginatedRequestParam>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
         Ok(ListResourcesResult {
@@ -951,7 +1103,7 @@ impl ServerHandler for SubgraphServer {
 
     async fn list_prompts(
         &self,
-        _request: PaginatedRequestParam,
+        _request: Option<PaginatedRequestParam>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
         Ok(ListPromptsResult {
@@ -1046,6 +1198,15 @@ impl ServerHandler for SubgraphServer {
                             required: Some(true),
                         },
                     ]),
+                ),
+                Prompt::new(
+                    "get_deployment_30day_query_counts",
+                    Some("Get 30-day query counts for multiple subgraph deployments by IPFS hash."),
+                    Some(vec![PromptArgument {
+                        name: "ipfsHashes".to_string(), // Matches GetDeployment30DayQueryCountsRequest field
+                        description: Some("A list of IPFS hashes (e.g., [\"Qm1...\", \"Qm2...\"])".to_string()),
+                        required: Some(true),
+                    }]),
                 ),
             ],
         })
@@ -1200,6 +1361,24 @@ impl ServerHandler for SubgraphServer {
                     }],
                 })
             }
+            "get_deployment_30day_query_counts" => {
+                let ipfs_hashes_str = arguments
+                    .as_ref()
+                    .and_then(|args| args.get("ipfsHashes"))
+                    .and_then(|v| v.as_str()) // Assuming ipfsHashes is a string representation of a list
+                    .unwrap_or("[\"{ipfsHash1}\", \"{ipfsHash2}\"]")
+                    .to_string();
+                Ok(GetPromptResult {
+                    description: Some("Get 30-day query counts for multiple subgraph deployments.".to_string()),
+                    messages: vec![PromptMessage {
+                        role: PromptMessageRole::User,
+                        content: PromptMessageContent::text(format!(
+                            "Retrieve the 30-day query counts for subgraph deployments with IPFS hashes: {}",
+                            ipfs_hashes_str
+                        )),
+                    }],
+                })
+            }
             _ => Err(McpError::invalid_params("prompt not found", None)),
         }
     }
@@ -1208,33 +1387,28 @@ impl ServerHandler for SubgraphServer {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .try_init()
+        .unwrap_or_else(|e| eprintln!("env_logger init failed: {}", e));
 
-    // Check for --sse flag
     if args.iter().any(|arg| arg == "--sse") {
         start_sse_server().await
     } else {
-        // Default to stdio if no --sse flag
         start_stdio_server().await
     }
 }
 
 async fn start_stdio_server() -> Result<()> {
-    env_logger::init();
     info!("Starting STDIO Subgraph MCP Server");
-
     let server = SubgraphServer::new();
-
     let transport = (io::stdin(), io::stdout());
-
     let running = server.serve(transport).await?;
     running.waiting().await?;
-
-    info!("Server shutdown complete");
+    info!("STDIO Server shutdown complete");
     Ok(())
 }
 
 async fn start_sse_server() -> Result<()> {
-    env_logger::init();
     info!("Starting SSE Subgraph MCP Server");
     let host = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port = env::var("PORT").unwrap_or_else(|_| "8000".to_string());
@@ -1246,24 +1420,21 @@ async fn start_sse_server() -> Result<()> {
     let post_path = env::var("POST_PATH").unwrap_or_else(|_| "/messages".to_string());
 
     let server_shutdown_token = CancellationToken::new();
-    let service_shutdown_token;
 
     let config = SseServerConfig {
         bind: bind_addr,
         sse_path,
         post_path,
-        ct: server_shutdown_token.clone(), // Token for the server transport
+        ct: server_shutdown_token.clone(),
+        sse_keep_alive: Some(Duration::from_secs(30)),
     };
 
     let sse_server = SseServer::serve_with_config(config).await?;
     info!("SSE Server listening on {}", sse_server.config.bind);
 
-    // Attach the Subgraph MCP service
-    // This returns a token specific to the service task
-    service_shutdown_token = sse_server.with_service(SubgraphServer::new);
-    info!("Subgraph MCP Service attached");
+    let service_shutdown_token = sse_server.with_service(SubgraphServer::new);
+    info!("Subgraph MCP Service attached to SSE server");
 
-    // Wait for a shutdown signal (Ctrl+C or SIGTERM)
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 
     tokio::select! {
@@ -1273,13 +1444,14 @@ async fn start_sse_server() -> Result<()> {
         _ = sigterm.recv() => {
              info!("SIGTERM received, initiating graceful shutdown...");
         }
-
     };
 
     info!("Signalling service and server to shut down...");
-    service_shutdown_token.cancel(); // Signal the MCP service task to stop
-    server_shutdown_token.cancel(); // Signal the underlying web server to stop
+    service_shutdown_token.cancel();
+    server_shutdown_token.cancel();
 
-    info!("Shutdown complete.");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    info!("SSE Server shutdown complete.");
     Ok(())
 }
