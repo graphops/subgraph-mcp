@@ -12,7 +12,53 @@ A Model Context Protocol (MCP) server that allows LLMs to interact with Subgraph
 - Supports MCP resources, tools, and prompts
 - Can run in STDIO mode or as an SSE (Server-Sent Events) server
 
-## Requirements
+## Usage
+
+The `subgraph-mcp` server offers two primary ways to interact with The Graph Network:
+
+1.  **Connecting to the Remote Hosted MCP Service (Recommended for most users)**
+2.  **Building and Running the Server Locally**
+
+### Connecting to the Remote Hosted MCP Service
+
+This is the quickest way to get started. You can configure your MCP client (e.g., Claude Desktop) to connect to our hosted `subgraph-mcp` service.
+
+#### Requirements
+
+- A Gateway API key for The Graph Network.
+
+#### Configuration
+
+Add the following to your configuration file of your client (e.g.,`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "subgraph-mcp": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "--header",
+        "Authorization:${AUTH_HEADER}",
+        "https://subgraphs.mcp.thegraph.com/sse"
+      ],
+      "env": {
+        "AUTH_HEADER": "Bearer YOUR_GATEWAY_API_KEY" // <-- Replace with your actual key
+      }
+    }
+  }
+}
+```
+
+Replace `YOUR_GATEWAY_API_KEY` with your actual Gateway API key. After adding the configuration, restart your MCP client.
+
+Once configured, you can skip to the "Available Tools" or "Natural Language Queries" sections to learn how to interact with the service.
+
+### Building and Running the Server Locally
+
+This option is for users who prefer to build, run, and potentially modify the server on their own machine.
+
+#### Requirements (for Local Execution)
 
 - Rust (latest stable version recommended: 1.75+). \
   You can install it using the following command on macOS, Linux, or other Unix-like systems: \
@@ -21,9 +67,8 @@ A Model Context Protocol (MCP) server that allows LLMs to interact with Subgraph
   ```
   Follow the on-screen instructions. For other platforms, see the [official Rust installation guide](https://www.rust-lang.org/tools/install).
 - A Gateway API key for The Graph Network.
-- For Claude Desktop users: Latest Claude Desktop version
 
-## Installation
+#### Installation (for Local Execution)
 
 ```bash
 # Clone the repository
@@ -34,19 +79,27 @@ cd subgraph-mcp
 cargo build --release
 ```
 
-## Usage
+#### Configuration (for Local Execution)
 
-The server can be run in two modes: STDIO or SSE.
+Add the following to your configuration file of your client (e.g.,`claude_desktop_config.json`):
 
-### STDIO Mode (e.g., for Claude Desktop)
+```json
+{
+  "mcpServers": {
+    "subgraph-mcp": {
+      "command": "/path/to/your/subgraph-mcp/target/release/subgraph-mcp", // <-- Replace this with the actual path!
+      "env": {
+        "GATEWAY_API_KEY": "YOUR_GATEWAY_API_KEY" // <-- Replace with your actual key
+      }
+    }
+  }
+}
+```
 
-This mode is typically used for direct integration with local MCP clients like Claude Desktop.
-
-#### Configuration with Claude Desktop
-
-Add the server to your `claude_desktop_config.json`. You need to replace `/path/to/subgraph-mcp` with the **absolute path** to the compiled binary you built in the Installation step.
+You need to replace `/path/to/subgraph-mcp` with the **absolute path** to the compiled binary you built in the Installation step.
 
 **Finding the command path:**
+
 After running `cargo build --release`, the executable will typically be located at `target/release/subgraph-mcp` inside your project directory (`subgraph-mcp`).
 
 1. Navigate to your `subgraph-mcp` directory in the terminal.
@@ -55,73 +108,46 @@ After running `cargo build --release`, the executable will typically be located 
 
 For example, if `pwd` outputs `/Users/user/subgraph-mcp`, the full command path would be `/Users/user/subgraph-mcp/target/release/subgraph-mcp`.
 
-**Configuration Example:**
-
-```json
-{
-  "mcpServers": {
-    "subgraph": {
-      "command": "/path/to/your/subgraph-mcp/target/release/subgraph-mcp", // <-- Replace this with the actual path!
-      "env": {
-        "GATEWAY_API_KEY": "your-api-key-here"
-      }
-    }
-  }
-}
-```
-
 After adding the configuration, restart Claude Desktop.
 
-**Important**: Claude Desktop may not automatically utilize server resources. To ensure proper functionality, manually add "Subgraph MCP LLM Guidence" resource to your chat context by clicking on the context menu and adding the resource `graphql://subgraph`.
+**Important**: Claude Desktop may not automatically utilize server resources. To ensure proper functionality, manually add `Subgraph Server Instructions` resource to your chat context by clicking on the context menu and adding the resource.
 
 ## Available Tools
 
 The server exposes the following tools:
 
-- **`search_subgraphs_by_keyword`**: Search for subgraphs by keyword in their display names. Ordered by signal. Returns top 10 results if total results ≤ 100, or square root of total otherwise. (Corresponds to Step 2 of the workflow).
-- **`get_deployment_30day_query_counts`**: Get the aggregate query count over the last 30 days for multiple subgraph deployments (using their IPFS hashes), sorted by query count. (Corresponds to Step 3 of the workflow).
+- **`search_subgraphs_by_keyword`**: Search for subgraphs by keyword in their display names. Ordered by signal. Returns top 10 results if total results ≤ 100, or square root of total otherwise.
+- **`get_deployment_30day_query_counts`**: Get the aggregate query count over the last 30 days for multiple subgraph deployments (using their IPFS hashes), sorted by query count.
 - **`get_schema_by_deployment_id`**: Get the GraphQL schema for a specific subgraph deployment using its _deployment ID_ (e.g., `0x...`).
 - **`get_schema_by_subgraph_id`**: Get the GraphQL schema for the _current_ deployment associated with a _subgraph ID_ (e.g., `5zvR82...`).
 - **`get_schema_by_ipfs_hash`**: Get the GraphQL schema for a specific subgraph deployment using its manifest's _IPFS hash_ (e.g., `Qm...`).
 - **`execute_query_by_deployment_id`**: Execute a GraphQL query against a specific, immutable subgraph deployment using its _deployment ID_ (e.g., `0x...`).
 - **`execute_query_by_subgraph_id`**: Execute a GraphQL query against the _latest_ deployment associated with a _subgraph ID_ (e.g., `5zvR82...`).
 - **`execute_query_by_ipfs_hash`**: Execute a GraphQL query against a specific, immutable subgraph deployment using its _IPFS hash_ (e.g., `Qm...`).
-- **`get_top_subgraph_deployments`**: Get the top 3 subgraph deployments indexing a given contract address on a specific chain, ordered by query fees. (Used in the "Contract Address Lookup" special case).
+- **`get_top_subgraph_deployments`**: Get the top 3 subgraph deployments indexing a given contract address on a specific chain, ordered by query fees.
 
-**Key Identifier Types:**
+### Natural Language Queries
 
-- **Subgraph ID** (e.g., `5zvR82...`): Logical identifier for a subgraph. Use `execute_query_by_subgraph_id` or `get_schema_by_subgraph_id`.
-- **Deployment ID** (e.g., `0x4d7c...`): Identifier for a specific, immutable deployment. Use `execute_query_by_deployment_id` or `get_schema_by_deployment_id`.
-- **IPFS Hash** (e.g., `QmTZ8e...`): Identifier for the manifest of a specific, immutable deployment. Use `execute_query_by_ipfs_hash` or `get_schema_by_ipfs_hash`.
+Once connected to an LLM with this MCP server, you can ask natural language questions.
 
-Example usage in Claude (or other MCP clients), keeping the workflow in mind:
+**Important**: Claude Desktop may not automatically utilize server resources. To ensure proper functionality, manually add `Subgraph Server Instructions` resource to your chat context by clicking on the context menu and adding the resource.
 
-```
-User: Find subgraphs for Uniswap.
-
-Assistant (after `search_subgraphs_by_keyword` and `get_deployment_30day_query_counts`):
-I found several Uniswap subgraphs.
-- Uniswap v3 on Ethereum is the most active (X queries last 30 days).
-- Uniswap v2 on Ethereum (Y queries last 30 days).
-- Uniswap v3 on Arbitrum (Z queries last 30 days).
-Which specific version and network are you interested in?
-
-Find the top subgraphs for contract 0x1f98431c8ad98523631ae4a59f267346ea31f984 on arbitrum-one
-```
-
-### Natural Language Queries (Following the Workflow)
-
-Once connected to an LLM with this MCP server, you can ask natural language questions. The LLM should adhere to the `SERVER_INSTRUCTIONS` workflow:
+Example usage in Claude (or other MCP clients), assuming you added `Subgraph Server Instructions` to your prompt:
 
 ```
-What are the most active pools on Uniswap v3 on Ethereum?
+User: List the 20 most recently registered .eth names.
 
-(LLM internally performs search, query volume check, selects subgraph, potentially gets schema, then formulates and executes the query)
+Assistant (after `search_subgraphs_by_keyword`, `get_deployment_30day_query_counts` and other tool usage):
+Perfect! I've successfully retrieved the 20 most recently registered .eth names using the ENS subgraph, which has 68.1 million queries in the last 30 days, making it the most active and reliable source for ENS data.
+Here are the 20 most recently registered .eth names:
+
+...
+
 ```
 
 The LLM will automatically:
 
-1.  Follow the **Server Instructions & Workflow** described above.
+1.  Follow the **Subgraph Server Instructions**.
 2.  Use `search_subgraphs_by_keyword` to find candidate subgraphs.
 3.  Use `get_deployment_30day_query_counts` to verify activity and aid selection.
 4.  Use `get_top_subgraph_deployments` if a contract address is provided.
@@ -146,7 +172,68 @@ The server provides predefined prompts for most tools (as discoverable via MCP's
 
 The server exposes one resource:
 
-- `graphql://subgraph`: Provides the detailed `SERVER_INSTRUCTIONS` used by the LLM, including the workflow for different user goals (address lookup, finding subgraphs for a contract, querying by ID, getting schema) and important usage notes.
+- `graphql://subgraph`: Provides the detailed `Subgraph Server Instructions` used by the LLM, including the workflow for different user goals (address lookup, finding subgraphs for a contract, querying by ID, getting schema) and important usage notes.
+
+Below is a reference for the `Subgraph Server Instructions`:
+
+```
+**Interacting with The Graph Subgraphs**
+**IMPORTANT: ALWAYS verify query volumes using `get_deployment_30day_query_counts` for any potential subgraph candidate *before* selecting or querying it. This step is NON-OPTIONAL. Failure to do so may result in using outdated or irrelevant data.**
+**Follow this sequence strictly:**
+1.  **Analyze User Request:**
+    *   Identify the **protocol name** (e.g., "Uniswap", "Aave", "ENS").
+    *   Note any specific **version** or **blockchain network** mentioned by the user.
+    *   Determine the **goal**: Query data? Get schema?
+2.  **Initial Search & Preliminary Analysis:**
+    *   Use `search_subgraphs_by_keyword` with the most generic term for the protocol (e.g., if "Uniswap v3 on Ethereum", initially search only for "Uniswap").
+    *   Examine `displayName` and other metadata in the search results for version and network information.
+3.  **Mandatory Query Volume Check & Clarification (If Needed):**
+    *   **ALWAYS** extract the IPFS hashes (`ipfsHash`) for all potentially relevant subgraphs identified in Step 2.
+    *   **ALWAYS** use `get_deployment_30day_query_counts` for these IPFS hashes.
+    *   **If Ambiguous (Multiple Versions/Chains with significant volume):**
+        *   Present a summary to the user, **including the 30-day query counts for each option**. For example: "I found several Uniswap subgraphs. Uniswap v3 on Ethereum is the most active (X queries last 30 days). I also see Uniswap v2 on Ethereum (Y queries) and Uniswap v3 on Arbitrum (Z queries). Which specific version and network are you interested in?"
+    *   **If Still Unclear (Information Missing and Not Inferable even with query volumes):**
+        *   If version/chain information is genuinely missing from search results and user input, and query volumes don't offer a clear path (e.g. all relevant subgraphs have very low or no volume), ask for clarification directly. Example: "I found several subgraphs for 'ExampleProtocol', but none have significant query activity. Could you please specify the version and blockchain network you're interested in?"
+    *   **Do NOT proceed to Step 4 without completing this query volume verification.**
+4.  **Select Final Subgraph (Post Query Volume Check & Clarification):**
+    *   After the keyword search, mandatory query volume check, and any necessary clarification, you should have a clear target protocol, version, and network.
+    *   Identify all candidate subgraphs from your Step 2 `search_subgraphs_by_keyword` results that match these clarified criteria.
+    *   **If there is more than one such matching subgraph:**
+        *   You should have already fetched their query counts in Step 3.
+        *   **Select the subgraph with the highest `total_query_count`** among them.
+    *   **If only one subgraph precisely matches the criteria**, that is your selected subgraph.
+    *   When presenting your chosen subgraph or asking for final confirmation before querying, **ALWAYS state its 30-day query volume** to demonstrate this check has been performed. For example: "I've selected the 'Uniswap v3 Ethereum' subgraph, which has X queries in the last 30 days. Shall I proceed to get its schema?"
+    *   If the selected subgraph's query count is very low (and this wasn't already discussed during clarification), briefly inform the user.
+5.  **Execute Action Using the Identified Subgraph:**
+    *   **Identify the ID Type:** (Subgraph ID, Deployment ID, or IPFS Hash - note that `search_subgraphs_by_keyword` returns `id` for Subgraph ID and `ipfsHash` for current deployment's IPFS hash).
+    *   **Determine the Correct Tool based on Goal & ID Type:**
+        *   **Goal: Query Data**
+            *   Subgraph ID (`id` from search) → `execute_query_by_subgraph_id`
+            *   Deployment ID (0x...) → `execute_query_by_deployment_id`
+            *   IPFS Hash (`ipfsHash` from search) → `execute_query_by_ipfs_hash`
+        *   **Goal: Get Schema**
+            *   Subgraph ID → `get_schema_by_subgraph_id`
+            *   Deployment ID → `get_schema_by_deployment_id`
+            *   IPFS Hash → `get_schema_by_ipfs_hash`
+    *   **Write Clean GraphQL Queries:** Simple structure, omit 'variables' if unused, include only essential fields.
+**Special Case: Contract Address Lookup**
+*   ONLY when a user explicitly provides a **contract address** (0x...) AND asks for subgraphs related to it:
+    *   Identify the blockchain network for the address (ask user if unclear).
+    *   Use `get_top_subgraph_deployments` with the provided contract address and chain name.
+    *   Process and use the resulting IPFS hashes as needed. **Crucially, before using any of these IPFS hashes for querying, first use `get_deployment_30day_query_counts` with their IPFS hashes to verify recent activity.**
+**ID Type Reference:**
+*   **Subgraph ID**: Typically starts with digits and letters (e.g., 5zvR82...)
+*   **Contract Address**: A shorter hexadecimal string, typically 42 characters long including the "0x" prefix (e.g., 0x1a3c9b1d2f0529d97f2afc5136cc23e58f1fd35b).
+*   **Deployment ID**: A longer hexadecimal string, typically 66 characters long including the "0x" prefix (e.g., 0xc5b4d246cf890b0b468e005224622d4c85a8b723cc0b8fa7db6d1a93ddd2e5de). Use length to distinguish from a Contract Address.
+*   **IPFS Hash**: Typically starts with Qm... For the purpose of `get_deployment_30day_query_counts`, use the \'IPFS Hash\' (Qm...).
+*   Note `search_subgraphs_by_keyword` and `get_top_subgraph_deployments` returns `ipfsHash`.
+
+**Best Practices:**
+*   When using GraphQL, if unsure about the structure, first get the schema to understand available entities and fields.
+*   Create focused queries that only request necessary fields.
+*   For paginated data, use appropriate limit parameters.
+*   Use variables for dynamic values in queries.
+```
 
 ## Contributing
 

@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-use crate::{error::SubgraphError, http_utils::HttpRequestHeaders, types::*, constants::SERVER_INSTRUCTIONS};
-use rmcp::{model::*, service::RequestContext, RoleServer, ServerHandler, tool, Error as McpError};
-use serde_json::json;
+use crate::{
+    constants::SUBGRAPH_SERVER_INSTRUCTIONS, error::SubgraphError, http_utils::HttpRequestHeaders,
+    types::*,
+};
 use reqwest::Client;
+use rmcp::{model::*, service::RequestContext, tool, Error as McpError, RoleServer, ServerHandler};
+use serde_json::json;
 #[derive(Clone)]
 pub struct SubgraphServer {
     pub(crate) http_client: Client,
@@ -56,7 +59,7 @@ impl SubgraphServer {
                 "Configuration error: API key not found. Please set the GATEWAY_API_KEY environment variable or provide a Bearer token in the Authorization header.",
                 None,
             )),
-            Err(e) => Err(McpError::internal_error( 
+            Err(e) => Err(McpError::internal_error(
                 format!("Error retrieving API key: {}", e),
                 Some(json!({ "details": e.to_string() })),
             )),
@@ -421,8 +424,7 @@ impl ServerHandler for SubgraphServer {
                 name: env!("CARGO_PKG_NAME").to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
-            instructions: Some(SERVER_INSTRUCTIONS.to_string()),
-
+            instructions: Some(SUBGRAPH_SERVER_INSTRUCTIONS.to_string()),
         }
     }
 
@@ -432,7 +434,9 @@ impl ServerHandler for SubgraphServer {
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
         Ok(ListResourcesResult {
-            resources: vec![self._create_resource_text("graphql://subgraph", "Subgraph MCP LLM Guidence")],
+            resources: vec![
+                self._create_resource_text("graphql://subgraph", "Subgraph Server Instructions")
+            ],
             next_cursor: None,
         })
     }
@@ -444,7 +448,7 @@ impl ServerHandler for SubgraphServer {
     ) -> Result<ReadResourceResult, McpError> {
         match uri.as_str() {
             "graphql://subgraph" => {
-                let description = SERVER_INSTRUCTIONS;
+                let description = SUBGRAPH_SERVER_INSTRUCTIONS;
                 Ok(ReadResourceResult {
                     contents: vec![ResourceContents::text(description, uri)],
                 })
@@ -783,15 +787,13 @@ impl ServerHandler for SubgraphServer {
                     description: Some(
                         "Execute a GraphQL query against a specific IPFS hash.".to_string(),
                     ),
-                    messages: vec![
-                        PromptMessage {
-                            role: PromptMessageRole::User,
-                            content: PromptMessageContent::text(format!(
-                                "Run this GraphQL query against IPFS hash {}: {}\nWith variables: {}",
-                                ipfs_hash, query, variables_str
-                            )),
-                        },
-                    ],
+                    messages: vec![PromptMessage {
+                        role: PromptMessageRole::User,
+                        content: PromptMessageContent::text(format!(
+                            "Run this GraphQL query against IPFS hash {}: {}\nWith variables: {}",
+                            ipfs_hash, query, variables_str
+                        )),
+                    }],
                 })
             }
             _ => Err(McpError::invalid_params("prompt not found", None)),

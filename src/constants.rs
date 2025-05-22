@@ -3,7 +3,7 @@ pub const GATEWAY_URL: &str = "https://gateway.thegraph.com/api";
 pub const GRAPH_NETWORK_SUBGRAPH_ARBITRUM: &str = "QmdKXcBUHR3UyURqVRQHu1oV6VUkBrhi2vNvMx3bNDnUCc";
 pub const GATEWAY_QOS_ORACLE: &str = "QmZmb6z87QmqBLmkMhaqWy7h2GLF1ey8Qj7YSRuqSGMjeH";
 
-pub const SERVER_INSTRUCTIONS: &str = "**Interacting with The Graph Subgraphs**
+pub const SUBGRAPH_SERVER_INSTRUCTIONS: &str = "**Interacting with The Graph Subgraphs**
 **IMPORTANT: ALWAYS verify query volumes using `get_deployment_30day_query_counts` for any potential subgraph candidate *before* selecting or querying it. This step is NON-OPTIONAL. Failure to do so may result in using outdated or irrelevant data.**
 **Follow this sequence strictly:**
 1.  **Analyze User Request:**
