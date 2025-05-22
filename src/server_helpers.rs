@@ -284,7 +284,7 @@ impl SubgraphServer {
             orderDirection: desc
             first: 3
           ) {
-            id
+            ipfsHash
             manifest {
               network
             }

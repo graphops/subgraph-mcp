@@ -150,7 +150,7 @@ impl SubgraphServer {
         }
     }
 
-    #[tool(description = "Execute a GraphQL query against a specific deployment ID or IPFS hash.")]
+    #[tool(description = "Execute a GraphQL query against a specific deployment ID.")]
     pub async fn execute_query_by_deployment_id(
         &self,
         headers: HttpRequestHeaders,
@@ -177,6 +177,49 @@ impl SubgraphServer {
                         )),
                         _ => Err(McpError::internal_error(
                             format!("Unexpected error during query execution by deployment ID: {}",e),
+                            Some(json!({ "details": e.to_string()})),
+                        )),
+                    },
+                }
+            }
+            Err(SubgraphError::ApiKeyNotSet) => Err(McpError::invalid_params(
+                 "Configuration error: API key not found. Please set the GATEWAY_API_KEY environment variable or provide a Bearer token in the Authorization header.",
+                None,
+            )),
+            Err(e) => Err(McpError::internal_error(
+                format!("Error retrieving API key: {}", e),
+                Some(json!({ "details": e.to_string() })),
+            )),
+        }
+    }
+
+    #[tool(description = "Execute a GraphQL query against a specific IPFS hash.")]
+    pub async fn execute_query_by_ipfs_hash(
+        &self,
+        headers: HttpRequestHeaders,
+        #[tool(aggr)] ExecuteQueryByIpfsHashRequest {
+            ipfs_hash,
+            query,
+            variables,
+        }: ExecuteQueryByIpfsHashRequest,
+    ) -> Result<CallToolResult, McpError> {
+        match self.get_api_key(headers.0.as_ref()) {
+            Ok(api_key) => {
+                match self
+                    .execute_query_on_endpoint(&api_key, "deployments/id", &ipfs_hash, &query, variables)
+                    .await
+                {
+                    Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
+                        "{:#}",
+                        result
+                    ))])),
+                    Err(e) => match e {
+                        SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
+                            e.to_string(),
+                            Some(json!({ "details": e.to_string() })),
+                        )),
+                        _ => Err(McpError::internal_error(
+                            format!("Unexpected error during query execution by IPFS hash: {}",e),
                             Some(json!({ "details": e.to_string()})),
                         )),
                     },
@@ -374,8 +417,12 @@ impl ServerHandler for SubgraphServer {
                 .enable_resources()
                 .enable_tools()
                 .build(),
-            server_info: Implementation::from_build_env(),
+            server_info: Implementation {
+                name: env!("CARGO_PKG_NAME").to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+            },
             instructions: Some(SERVER_INSTRUCTIONS.to_string()),
+
         }
     }
 
@@ -518,6 +565,27 @@ impl ServerHandler for SubgraphServer {
                         required: Some(true),
                     }]),
                 ),
+                Prompt::new(
+                    "execute_query_by_ipfs_hash",
+                    Some("Execute a GraphQL query against a specific IPFS hash."),
+                    Some(vec![
+                        PromptArgument {
+                            name: "ipfsHash".to_string(),
+                            description: Some("The IPFS hash (e.g., Qm...) of the specific deployment".to_string()),
+                            required: Some(true),
+                        },
+                        PromptArgument {
+                            name: "query".to_string(),
+                            description: Some("The GraphQL query to execute".to_string()),
+                            required: Some(true),
+                        },
+                        PromptArgument {
+                            name: "variables".to_string(),
+                            description: Some("Optional JSON value for GraphQL variables".to_string()),
+                            required: Some(false),
+                        },
+                    ]),
+                ),
             ],
         })
     }
@@ -592,7 +660,7 @@ impl ServerHandler for SubgraphServer {
                     messages: vec![PromptMessage {
                         role: PromptMessageRole::User,
                         content: PromptMessageContent::text(format!(
-                            "Run this GraphQL query against deployment ID/hash {}: {}",
+                            "Run this GraphQL query against deployment ID {}: {}",
                             deployment_id, query
                         )),
                     }],
@@ -687,6 +755,43 @@ impl ServerHandler for SubgraphServer {
                             ipfs_hashes_str
                         )),
                     }],
+                })
+            }
+            "execute_query_by_ipfs_hash" => {
+                let ipfs_hash = arguments
+                    .as_ref()
+                    .and_then(|args| args.get("ipfsHash"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("{ipfsHash}")
+                    .to_string();
+
+                let query = arguments
+                    .as_ref()
+                    .and_then(|args| args.get("query"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("{query}")
+                    .to_string();
+
+                let variables_str = arguments
+                    .as_ref()
+                    .and_then(|args| args.get("variables"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "{}".to_string());
+
+                Ok(GetPromptResult {
+                    description: Some(
+                        "Execute a GraphQL query against a specific IPFS hash.".to_string(),
+                    ),
+                    messages: vec![
+                        PromptMessage {
+                            role: PromptMessageRole::User,
+                            content: PromptMessageContent::text(format!(
+                                "Run this GraphQL query against IPFS hash {}: {}\nWith variables: {}",
+                                ipfs_hash, query, variables_str
+                            )),
+                        },
+                    ],
                 })
             }
             _ => Err(McpError::invalid_params("prompt not found", None)),

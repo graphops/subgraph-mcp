@@ -72,7 +72,7 @@ For example, if `pwd` outputs `/Users/user/subgraph-mcp`, the full command path 
 
 After adding the configuration, restart Claude Desktop.
 
-**Important**: Claude Desktop may not automatically utilize server resources. To ensure proper functionality, manually add "The Graph" resource to your chat context by clicking on the context menu and adding the resource `graphql://subgraph`.
+**Important**: Claude Desktop may not automatically utilize server resources. To ensure proper functionality, manually add "Subgraph MCP LLM Guidence" resource to your chat context by clicking on the context menu and adding the resource `graphql://subgraph`.
 
 ## Available Tools
 
@@ -83,15 +83,16 @@ The server exposes the following tools:
 - **`get_schema_by_deployment_id`**: Get the GraphQL schema for a specific subgraph deployment using its _deployment ID_ (e.g., `0x...`).
 - **`get_schema_by_subgraph_id`**: Get the GraphQL schema for the _current_ deployment associated with a _subgraph ID_ (e.g., `5zvR82...`).
 - **`get_schema_by_ipfs_hash`**: Get the GraphQL schema for a specific subgraph deployment using its manifest's _IPFS hash_ (e.g., `Qm...`).
-- **`execute_query_by_deployment_id`**: Execute a GraphQL query against a specific, immutable subgraph deployment using its _deployment ID_ (e.g., `0x...`) or _IPFS hash_ (e.g., `Qm...`).
+- **`execute_query_by_deployment_id`**: Execute a GraphQL query against a specific, immutable subgraph deployment using its _deployment ID_ (e.g., `0x...`).
 - **`execute_query_by_subgraph_id`**: Execute a GraphQL query against the _latest_ deployment associated with a _subgraph ID_ (e.g., `5zvR82...`).
+- **`execute_query_by_ipfs_hash`**: Execute a GraphQL query against a specific, immutable subgraph deployment using its _IPFS hash_ (e.g., `Qm...`).
 - **`get_top_subgraph_deployments`**: Get the top 3 subgraph deployments indexing a given contract address on a specific chain, ordered by query fees. (Used in the "Contract Address Lookup" special case).
 
 **Key Identifier Types:**
 
 - **Subgraph ID** (e.g., `5zvR82...`): Logical identifier for a subgraph. Use `execute_query_by_subgraph_id` or `get_schema_by_subgraph_id`.
 - **Deployment ID** (e.g., `0x4d7c...`): Identifier for a specific, immutable deployment. Use `execute_query_by_deployment_id` or `get_schema_by_deployment_id`.
-- **IPFS Hash** (e.g., `QmTZ8e...`): Identifier for the manifest of a specific, immutable deployment. Use `execute_query_by_deployment_id` (the gateway treats it like a deployment ID for querying) or `get_schema_by_ipfs_hash`.
+- **IPFS Hash** (e.g., `QmTZ8e...`): Identifier for the manifest of a specific, immutable deployment. Use `execute_query_by_ipfs_hash` or `get_schema_by_ipfs_hash`.
 
 Example usage in Claude (or other MCP clients), keeping the workflow in mind:
 
@@ -136,8 +137,9 @@ The server provides predefined prompts for most tools (as discoverable via MCP's
 - `get_schema_by_deployment_id`: Get the schema for a deployment ID.
 - `get_schema_by_subgraph_id`: Get the schema for a subgraph ID.
 - `get_schema_by_ipfs_hash`: Get the schema for an IPFS hash.
-- `execute_query_by_deployment_id`: Run a GraphQL query against a deployment ID/hash.
+- `execute_query_by_deployment_id`: Run a GraphQL query against a deployment ID.
 - `execute_query_by_subgraph_id`: Run a GraphQL query against a subgraph ID.
+- `execute_query_by_ipfs_hash`: Run a GraphQL query against an IPFS hash.
 - `get_top_subgraph_deployments`: Get top subgraphs for a contract on a specific chain.
 
 ## Resources

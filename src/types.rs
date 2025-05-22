@@ -27,8 +27,19 @@ pub struct GetSchemaByIpfsHashRequest {
 
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ExecuteQueryByDeploymentIdRequest {
-    #[schemars(description = "The deployment ID or IPFS hash of the specific subgraph deployment")]
+    #[schemars(
+        description = "The deployment ID (e.g., 0x...) of the specific subgraph deployment"
+    )]
     pub deployment_id: String,
+    #[schemars(description = "The GraphQL query string")]
+    pub query: String,
+    #[schemars(description = "Optional JSON value for GraphQL variables")]
+    pub variables: Option<serde_json::Value>,
+}
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ExecuteQueryByIpfsHashRequest {
+    #[schemars(description = "The IPFS hash (e.g., Qm...) of the specific deployment")]
+    pub ipfs_hash: String,
     #[schemars(description = "The GraphQL query string")]
     pub query: String,
     #[schemars(description = "Optional JSON value for GraphQL variables")]

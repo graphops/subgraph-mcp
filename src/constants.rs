@@ -35,7 +35,8 @@ pub const SERVER_INSTRUCTIONS: &str = "**Interacting with The Graph Subgraphs**
     *   **Determine the Correct Tool based on Goal & ID Type:**
         *   **Goal: Query Data**
             *   Subgraph ID (`id` from search) → `execute_query_by_subgraph_id`
-            *   Deployment ID / IPFS Hash (`ipfsHash` from search) → `execute_query_by_deployment_id`
+            *   Deployment ID (0x...) → `execute_query_by_deployment_id`
+            *   IPFS Hash (`ipfsHash` from search) → `execute_query_by_ipfs_hash`
         *   **Goal: Get Schema**
             *   Subgraph ID → `get_schema_by_subgraph_id`
             *   Deployment ID → `get_schema_by_deployment_id`
@@ -45,10 +46,13 @@ pub const SERVER_INSTRUCTIONS: &str = "**Interacting with The Graph Subgraphs**
 *   ONLY when a user explicitly provides a **contract address** (0x...) AND asks for subgraphs related to it:
     *   Identify the blockchain network for the address (ask user if unclear).
     *   Use `get_top_subgraph_deployments` with the provided contract address and chain name.
-    *   Process and use the resulting deployment IDs as needed. **Crucially, before using any of these deployment IDs for querying, first use `get_deployment_30day_query_counts` with their IPFS hashes (which are the deployment IDs themselves in this context) to verify activity.**
+    *   Process and use the resulting IPFS hashes as needed. **Crucially, before using any of these IPFS hashes for querying, first use `get_deployment_30day_query_counts` with their IPFS hashes to verify recent activity.**
 **ID Type Reference:**
 *   **Subgraph ID**: Typically starts with digits and letters (e.g., 5zvR82...)
-*   **Deployment ID / IPFS Hash**: For the purpose of `get_deployment_30day_query_counts`, the 'IPFS Hash' (Qm...) or 'Deployment ID' (0x...) can be used. Note `search_subgraphs_by_keyword` returns `ipfsHash`. `get_top_subgraph_deployments` returns `id` which is the Deployment ID (0x...).
+*   **Contract Address**: A shorter hexadecimal string, typically 42 characters long including the \"0x\" prefix (e.g., 0x1a3c9b1d2f0529d97f2afc5136cc23e58f1fd35b).
+*   **Deployment ID**: A longer hexadecimal string, typically 66 characters long including the \"0x\" prefix (e.g., 0xc5b4d246cf890b0b468e005224622d4c85a8b723cc0b8fa7db6d1a93ddd2e5de). Use length to distinguish from a Contract Address.
+*   **IPFS Hash**: Typically starts with Qm... For the purpose of `get_deployment_30day_query_counts`, use the \'IPFS Hash\' (Qm...).
+*   Note `search_subgraphs_by_keyword` and `get_top_subgraph_deployments` returns `ipfsHash`.
 
 **Best Practices:**
 *   When using GraphQL, if unsure about the structure, first get the schema to understand available entities and fields.
