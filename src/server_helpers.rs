@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-use crate::constants::{GATEWAY_QOS_ORACLE, GATEWAY_REGISTRY, DEFAULT_GATEWAY_ID, GRAPH_NETWORK_SUBGRAPH_ARBITRUM};
+use crate::constants::{
+    DEFAULT_GATEWAY_ID, GATEWAY_QOS_ORACLE, GATEWAY_REGISTRY, GRAPH_NETWORK_SUBGRAPH_ARBITRUM,
+};
 use crate::error::SubgraphError;
 use crate::server::SubgraphServer;
 use crate::types::*;
@@ -62,7 +64,9 @@ impl SubgraphServer {
         if let Some(gateway_url) = GATEWAY_REGISTRY.get(DEFAULT_GATEWAY_ID) {
             Ok(gateway_url.to_string())
         } else {
-            Err(SubgraphError::InvalidGatewayId("Default gateway ID not found in registry".to_string()))
+            Err(SubgraphError::InvalidGatewayId(
+                "Default gateway ID not found in registry".to_string(),
+            ))
         }
     }
 
@@ -71,7 +75,11 @@ impl SubgraphServer {
             .unwrap_or_else(|_| GRAPH_NETWORK_SUBGRAPH_ARBITRUM.to_string())
     }
 
-    pub(crate) fn get_network_subgraph_query_url(&self, api_key: &str, gateway_url: &str) -> String {
+    pub(crate) fn get_network_subgraph_query_url(
+        &self,
+        api_key: &str,
+        gateway_url: &str,
+    ) -> String {
         format!(
             "{}/{}/deployments/id/{}",
             gateway_url,
