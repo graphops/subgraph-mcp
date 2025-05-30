@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-use crate::constants::*;
+use crate::constants::{GATEWAY_QOS_ORACLE, GATEWAY_REGISTRY, DEFAULT_GATEWAY_ID, GRAPH_NETWORK_SUBGRAPH_ARBITRUM};
 use crate::error::SubgraphError;
 use crate::server::SubgraphServer;
 use crate::types::*;
@@ -31,15 +31,50 @@ impl SubgraphServer {
         env::var("GATEWAY_API_KEY").map_err(|_| SubgraphError::ApiKeyNotSet)
     }
 
+    pub(crate) fn get_gateway_url(
+        &self,
+        headers_opt: Option<&HeaderMap>,
+    ) -> Result<String, SubgraphError> {
+        if let Some(actual_headers) = headers_opt {
+            if let Some(gateway_id_header) = actual_headers.get("x-gateway-id") {
+                if let Ok(gateway_id) = gateway_id_header.to_str() {
+                    if !gateway_id.is_empty() {
+                        // Look up the gateway URL by ID
+                        if let Some(gateway_url) = GATEWAY_REGISTRY.get(gateway_id) {
+                            tracing::debug!(target: "mcp_gateway", ?gateway_id, ?gateway_url, "Using gateway from header");
+                            return Ok(gateway_url.to_string());
+                        } else {
+                            // Invalid gateway ID - return error with available options
+                            let valid_ids: Vec<&str> = GATEWAY_REGISTRY.keys().copied().collect();
+                            let error_msg = format!(
+                                "Invalid gateway ID '{}'. Valid gateway IDs are: {}",
+                                gateway_id,
+                                valid_ids.join(", ")
+                            );
+                            tracing::warn!(target: "mcp_gateway", ?gateway_id, "Invalid gateway ID requested");
+                            return Err(SubgraphError::InvalidGatewayId(error_msg));
+                        }
+                    }
+                }
+            }
+        }
+        // Use default gateway
+        if let Some(gateway_url) = GATEWAY_REGISTRY.get(DEFAULT_GATEWAY_ID) {
+            Ok(gateway_url.to_string())
+        } else {
+            Err(SubgraphError::InvalidGatewayId("Default gateway ID not found in registry".to_string()))
+        }
+    }
+
     pub(crate) fn get_graph_network_subgraph(&self) -> String {
         env::var("GRAPH_NETWORK_SUBGRAPH")
             .unwrap_or_else(|_| GRAPH_NETWORK_SUBGRAPH_ARBITRUM.to_string())
     }
 
-    pub(crate) fn get_network_subgraph_query_url(&self, api_key: &str) -> String {
+    pub(crate) fn get_network_subgraph_query_url(&self, api_key: &str, gateway_url: &str) -> String {
         format!(
             "{}/{}/deployments/id/{}",
-            GATEWAY_URL,
+            gateway_url,
             api_key,
             self.get_graph_network_subgraph()
         )
@@ -48,9 +83,10 @@ impl SubgraphServer {
     pub(crate) async fn get_schema_by_deployment_id_internal(
         &self,
         api_key: &str,
+        gateway_url: &str,
         deployment_id: &str,
     ) -> Result<String, SubgraphError> {
-        let url = self.get_network_subgraph_query_url(api_key);
+        let url = self.get_network_subgraph_query_url(api_key, gateway_url);
 
         let query = r#"
         query SubgraphDeploymentSchema($id: String!) {
@@ -108,9 +144,10 @@ impl SubgraphServer {
     pub(crate) async fn get_schema_by_subgraph_id_internal(
         &self,
         api_key: &str,
+        gateway_url: &str,
         subgraph_id: &str,
     ) -> Result<String, SubgraphError> {
-        let url = self.get_network_subgraph_query_url(api_key);
+        let url = self.get_network_subgraph_query_url(api_key, gateway_url);
 
         let query = r#"
         query SubgraphSchema($id: String!) {
@@ -170,9 +207,10 @@ impl SubgraphServer {
     pub(crate) async fn get_schema_by_ipfs_hash_internal(
         &self,
         api_key: &str,
+        gateway_url: &str,
         ipfs_hash: &str,
     ) -> Result<String, SubgraphError> {
-        let url = self.get_network_subgraph_query_url(api_key);
+        let url = self.get_network_subgraph_query_url(api_key, gateway_url);
 
         let query = r#"
         query DeploymentSchemaByIpfsHash($hash: String!) {
@@ -227,12 +265,13 @@ impl SubgraphServer {
     pub(crate) async fn execute_query_on_endpoint(
         &self,
         api_key: &str,
+        gateway_url: &str,
         endpoint_type: &str,
         id: &str,
         query: &str,
         variables: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, SubgraphError> {
-        let url = format!("{}/{}/{}/{}", GATEWAY_URL, api_key, endpoint_type, id);
+        let url = format!("{}/{}/{}/{}", gateway_url, api_key, endpoint_type, id);
 
         let mut request_body = serde_json::json!({
             "query": query,
@@ -271,10 +310,11 @@ impl SubgraphServer {
     pub(crate) async fn get_top_subgraph_deployments_internal(
         &self,
         api_key: &str,
+        gateway_url: &str,
         contract_address: &str,
         chain: &str,
     ) -> Result<serde_json::Value, SubgraphError> {
-        let url = self.get_network_subgraph_query_url(api_key);
+        let url = self.get_network_subgraph_query_url(api_key, gateway_url);
 
         let query = r#"
         query TopSubgraphDeploymentsForContract($network: String!, $contractAddress: String!) {
@@ -328,9 +368,10 @@ impl SubgraphServer {
     pub(crate) async fn search_subgraphs_by_keyword_internal(
         &self,
         api_key: &str,
+        gateway_url: &str,
         keyword: &str,
     ) -> Result<serde_json::Value, SubgraphError> {
-        let url = self.get_network_subgraph_query_url(api_key);
+        let url = self.get_network_subgraph_query_url(api_key, gateway_url);
 
         let query = r#"
         query SearchSubgraphsByKeyword($keyword: String!) {
@@ -402,11 +443,12 @@ impl SubgraphServer {
     pub(crate) async fn get_deployment_30day_query_counts_internal(
         &self,
         api_key: &str,
+        gateway_url: &str,
         ipfs_hashes: &[String],
     ) -> Result<serde_json::Value, SubgraphError> {
         let url = format!(
             "{}/{}/deployments/id/{}",
-            GATEWAY_URL, api_key, GATEWAY_QOS_ORACLE
+            gateway_url, api_key, GATEWAY_QOS_ORACLE
         );
 
         let now = SystemTime::now()

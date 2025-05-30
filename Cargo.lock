@@ -1499,6 +1499,7 @@ dependencies = [
  "futures",
  "http",
  "log",
+ "once_cell",
  "reqwest",
  "rmcp",
  "schemars",

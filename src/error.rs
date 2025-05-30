@@ -13,4 +13,6 @@ pub enum SubgraphError {
     JsonError(#[from] serde_json::Error),
     #[error("Internal processing error: {0}")]
     InternalProcessingError(String),
+    #[error("{0}")]
+    InvalidGatewayId(String),
 }
