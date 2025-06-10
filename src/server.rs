@@ -38,21 +38,33 @@ impl SubgraphServer {
     ) -> Result<CallToolResult, McpError> {
         match self.get_api_key(headers.0.as_ref()) {
             Ok(api_key) => {
-                match self
-                    .get_schema_by_deployment_id_internal(&api_key, &deployment_id)
-                    .await
-                {
-                    Ok(schema) => Ok(CallToolResult::success(vec![Content::text(schema)])),
-                    Err(e) => match e {
-                        SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
-                            e.to_string(),
-                            Some(json!({ "details": e.to_string() })),
-                        )),
-                        _ => Err(McpError::internal_error(
-                            format!("Unexpected error during schema retrieval: {}", e),
-                            Some(json!({ "details": e.to_string()})),
-                        )),
-                    },
+                match self.get_gateway_url(headers.0.as_ref()) {
+                    Ok(gateway_url) => {
+                        match self
+                            .get_schema_by_deployment_id_internal(&api_key, &gateway_url, &deployment_id)
+                            .await
+                        {
+                            Ok(schema) => Ok(CallToolResult::success(vec![Content::text(schema)])),
+                            Err(e) => match e {
+                                SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
+                                    e.to_string(),
+                                    Some(json!({ "details": e.to_string() })),
+                                )),
+                                _ => Err(McpError::internal_error(
+                                    format!("Unexpected error during schema retrieval: {}", e),
+                                    Some(json!({ "details": e.to_string()})),
+                                )),
+                            },
+                        }
+                    }
+                    Err(SubgraphError::InvalidGatewayId(msg)) => Err(McpError::internal_error(
+                        msg.clone(),
+                        Some(json!({ "details": msg.clone() })),
+                    )),
+                    Err(e) => Err(McpError::internal_error(
+                        format!("Error retrieving gateway URL: {}", e),
+                        Some(json!({ "details": e.to_string() })),
+                    )),
                 }
             }
             Err(SubgraphError::ApiKeyNotSet) => Err(McpError::invalid_params(
@@ -76,32 +88,44 @@ impl SubgraphServer {
     ) -> Result<CallToolResult, McpError> {
         match self.get_api_key(headers.0.as_ref()) {
             Ok(api_key) => {
-                match self
-                    .get_schema_by_subgraph_id_internal(&api_key, &subgraph_id)
-                    .await
-                {
-                    Ok(schema_string) => {
-                        tracing::info!(target: "mcp_tool_auth", subgraph_id = %subgraph_id, "Internal function call successful.");
-                        Ok(CallToolResult::success(vec![Content::text(schema_string)]))
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            target: "mcp_tool_auth",
-                            subgraph_id = %subgraph_id,
-                            error = %e,
-                            "Internal function call failed."
-                        );
-                        match e {
-                            SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
-                                e.to_string(),
-                                Some(json!({ "details": e.to_string() })),
-                            )),
-                            _ => Err(McpError::internal_error(
-                                format!("Unexpected error during schema retrieval by subgraph ID: {}",e),
-                                Some(json!({ "details": e.to_string()})),
-                            )),
+                match self.get_gateway_url(headers.0.as_ref()) {
+                    Ok(gateway_url) => {
+                        match self
+                            .get_schema_by_subgraph_id_internal(&api_key, &gateway_url, &subgraph_id)
+                            .await
+                        {
+                            Ok(schema_string) => {
+                                tracing::info!(target: "mcp_tool_auth", subgraph_id = %subgraph_id, "Internal function call successful.");
+                                Ok(CallToolResult::success(vec![Content::text(schema_string)]))
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    target: "mcp_tool_auth",
+                                    subgraph_id = %subgraph_id,
+                                    error = %e,
+                                    "Internal function call failed."
+                                );
+                                match e {
+                                    SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
+                                        e.to_string(),
+                                        Some(json!({ "details": e.to_string() })),
+                                    )),
+                                    _ => Err(McpError::internal_error(
+                                        format!("Unexpected error during schema retrieval by subgraph ID: {}",e),
+                                        Some(json!({ "details": e.to_string()})),
+                                    )),
+                                }
+                            }
                         }
                     }
+                    Err(SubgraphError::InvalidGatewayId(msg)) => Err(McpError::internal_error(
+                        msg.clone(),
+                        Some(json!({ "details": msg.clone() })),
+                    )),
+                    Err(e) => Err(McpError::internal_error(
+                        format!("Error retrieving gateway URL: {}", e),
+                        Some(json!({ "details": e.to_string() })),
+                    )),
                 }
             }
             Err(SubgraphError::ApiKeyNotSet) => Err(McpError::invalid_params(
@@ -125,21 +149,33 @@ impl SubgraphServer {
     ) -> Result<CallToolResult, McpError> {
         match self.get_api_key(headers.0.as_ref()) {
             Ok(api_key) => {
-                match self
-                    .get_schema_by_ipfs_hash_internal(&api_key, &ipfs_hash)
-                    .await
-                {
-                    Ok(schema) => Ok(CallToolResult::success(vec![Content::text(schema)])),
-                    Err(e) => match e {
-                        SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
-                            e.to_string(),
-                            Some(json!({ "details": e.to_string() })),
-                        )),
-                        _ => Err(McpError::internal_error(
-                            format!("Unexpected error during schema retrieval by IPFS hash: {}",e),
-                            Some(json!({ "details": e.to_string()})),
-                        )),
-                    },
+                match self.get_gateway_url(headers.0.as_ref()) {
+                    Ok(gateway_url) => {
+                        match self
+                            .get_schema_by_ipfs_hash_internal(&api_key, &gateway_url, &ipfs_hash)
+                            .await
+                        {
+                            Ok(schema) => Ok(CallToolResult::success(vec![Content::text(schema)])),
+                            Err(e) => match e {
+                                SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
+                                    e.to_string(),
+                                    Some(json!({ "details": e.to_string() })),
+                                )),
+                                _ => Err(McpError::internal_error(
+                                    format!("Unexpected error during schema retrieval by IPFS hash: {}",e),
+                                    Some(json!({ "details": e.to_string()})),
+                                )),
+                            },
+                        }
+                    }
+                    Err(SubgraphError::InvalidGatewayId(msg)) => Err(McpError::internal_error(
+                        msg.clone(),
+                        Some(json!({ "details": msg.clone() })),
+                    )),
+                    Err(e) => Err(McpError::internal_error(
+                        format!("Error retrieving gateway URL: {}", e),
+                        Some(json!({ "details": e.to_string() })),
+                    )),
                 }
             }
             Err(SubgraphError::ApiKeyNotSet) => Err(McpError::invalid_params(
@@ -165,24 +201,36 @@ impl SubgraphServer {
     ) -> Result<CallToolResult, McpError> {
         match self.get_api_key(headers.0.as_ref()) {
             Ok(api_key) => {
-                match self
-                    .execute_query_on_endpoint(&api_key, "deployments/id", &deployment_id, &query, variables)
-                    .await
-                {
-                    Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
-                        "{:#}",
-                        result
-                    ))])),
-                    Err(e) => match e {
-                        SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
-                            e.to_string(),
-                            Some(json!({ "details": e.to_string() })),
-                        )),
-                        _ => Err(McpError::internal_error(
-                            format!("Unexpected error during query execution by deployment ID: {}",e),
-                            Some(json!({ "details": e.to_string()})),
-                        )),
-                    },
+                match self.get_gateway_url(headers.0.as_ref()) {
+                    Ok(gateway_url) => {
+                        match self
+                            .execute_query_on_endpoint(&api_key, &gateway_url, "deployments/id", &deployment_id, &query, variables)
+                            .await
+                        {
+                            Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
+                                "{:#}",
+                                result
+                            ))])),
+                            Err(e) => match e {
+                                SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
+                                    e.to_string(),
+                                    Some(json!({ "details": e.to_string() })),
+                                )),
+                                _ => Err(McpError::internal_error(
+                                    format!("Unexpected error during query execution by deployment ID: {}",e),
+                                    Some(json!({ "details": e.to_string()})),
+                                )),
+                            },
+                        }
+                    }
+                    Err(SubgraphError::InvalidGatewayId(msg)) => Err(McpError::internal_error(
+                        msg.clone(),
+                        Some(json!({ "details": msg.clone() })),
+                    )),
+                    Err(e) => Err(McpError::internal_error(
+                        format!("Error retrieving gateway URL: {}", e),
+                        Some(json!({ "details": e.to_string() })),
+                    )),
                 }
             }
             Err(SubgraphError::ApiKeyNotSet) => Err(McpError::invalid_params(
@@ -208,24 +256,36 @@ impl SubgraphServer {
     ) -> Result<CallToolResult, McpError> {
         match self.get_api_key(headers.0.as_ref()) {
             Ok(api_key) => {
-                match self
-                    .execute_query_on_endpoint(&api_key, "deployments/id", &ipfs_hash, &query, variables)
-                    .await
-                {
-                    Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
-                        "{:#}",
-                        result
-                    ))])),
-                    Err(e) => match e {
-                        SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
-                            e.to_string(),
-                            Some(json!({ "details": e.to_string() })),
-                        )),
-                        _ => Err(McpError::internal_error(
-                            format!("Unexpected error during query execution by IPFS hash: {}",e),
-                            Some(json!({ "details": e.to_string()})),
-                        )),
-                    },
+                match self.get_gateway_url(headers.0.as_ref()) {
+                    Ok(gateway_url) => {
+                        match self
+                            .execute_query_on_endpoint(&api_key, &gateway_url, "deployments/id", &ipfs_hash, &query, variables)
+                            .await
+                        {
+                            Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
+                                "{:#}",
+                                result
+                            ))])),
+                            Err(e) => match e {
+                                SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
+                                    e.to_string(),
+                                    Some(json!({ "details": e.to_string() })),
+                                )),
+                                _ => Err(McpError::internal_error(
+                                    format!("Unexpected error during query execution by IPFS hash: {}",e),
+                                    Some(json!({ "details": e.to_string()})),
+                                )),
+                            },
+                        }
+                    }
+                    Err(SubgraphError::InvalidGatewayId(msg)) => Err(McpError::internal_error(
+                        msg.clone(),
+                        Some(json!({ "details": msg.clone() })),
+                    )),
+                    Err(e) => Err(McpError::internal_error(
+                        format!("Error retrieving gateway URL: {}", e),
+                        Some(json!({ "details": e.to_string() })),
+                    )),
                 }
             }
             Err(SubgraphError::ApiKeyNotSet) => Err(McpError::invalid_params(
@@ -251,24 +311,36 @@ impl SubgraphServer {
     ) -> Result<CallToolResult, McpError> {
         match self.get_api_key(headers.0.as_ref()) {
             Ok(api_key) => {
-                match self
-                    .execute_query_on_endpoint(&api_key, "subgraphs/id", &subgraph_id, &query, variables)
-                    .await
-                {
-                    Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
-                        "{:#}",
-                        result
-                    ))])),
-                    Err(e) => match e {
-                        SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
-                            e.to_string(),
-                            Some(json!({ "details": e.to_string() })),
-                        )),
-                        _ => Err(McpError::internal_error(
-                            format!("Unexpected error during query execution by subgraph ID: {}",e),
-                            Some(json!({ "details": e.to_string()})),
-                        )),
-                    },
+                match self.get_gateway_url(headers.0.as_ref()) {
+                    Ok(gateway_url) => {
+                        match self
+                            .execute_query_on_endpoint(&api_key, &gateway_url, "subgraphs/id", &subgraph_id, &query, variables)
+                            .await
+                        {
+                            Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
+                                "{:#}",
+                                result
+                            ))])),
+                            Err(e) => match e {
+                                SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
+                                    e.to_string(),
+                                    Some(json!({ "details": e.to_string() })),
+                                )),
+                                _ => Err(McpError::internal_error(
+                                    format!("Unexpected error during query execution by subgraph ID: {}",e),
+                                    Some(json!({ "details": e.to_string()})),
+                                )),
+                            },
+                        }
+                    }
+                    Err(SubgraphError::InvalidGatewayId(msg)) => Err(McpError::internal_error(
+                        msg.clone(),
+                        Some(json!({ "details": msg.clone() })),
+                    )),
+                    Err(e) => Err(McpError::internal_error(
+                        format!("Error retrieving gateway URL: {}", e),
+                        Some(json!({ "details": e.to_string() })),
+                    )),
                 }
             }
             Err(SubgraphError::ApiKeyNotSet) => Err(McpError::invalid_params(
@@ -295,24 +367,36 @@ impl SubgraphServer {
     ) -> Result<CallToolResult, McpError> {
         match self.get_api_key(headers.0.as_ref()) {
             Ok(api_key) => {
-                match self
-                    .get_top_subgraph_deployments_internal(&api_key, &contract_address, &chain)
-                    .await
-                {
-                    Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
-                        "{:#}",
-                        result
-                    ))])),
-                    Err(e) => match e {
-                        SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
-                            e.to_string(),
-                            Some(json!({ "details": e.to_string() })),
-                        )),
-                        _ => Err(McpError::internal_error(
-                            format!("Unexpected error during top subgraph deployment retrieval: {}",e),
-                            Some(json!({ "details": e.to_string()})),
-                        )),
-                    },
+                match self.get_gateway_url(headers.0.as_ref()) {
+                    Ok(gateway_url) => {
+                        match self
+                            .get_top_subgraph_deployments_internal(&api_key, &gateway_url, &contract_address, &chain)
+                            .await
+                        {
+                            Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
+                                "{:#}",
+                                result
+                            ))])),
+                            Err(e) => match e {
+                                SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
+                                    e.to_string(),
+                                    Some(json!({ "details": e.to_string() })),
+                                )),
+                                _ => Err(McpError::internal_error(
+                                    format!("Unexpected error during top subgraph deployment retrieval: {}",e),
+                                    Some(json!({ "details": e.to_string()})),
+                                )),
+                            },
+                        }
+                    }
+                    Err(SubgraphError::InvalidGatewayId(msg)) => Err(McpError::internal_error(
+                        msg.clone(),
+                        Some(json!({ "details": msg.clone() })),
+                    )),
+                    Err(e) => Err(McpError::internal_error(
+                        format!("Error retrieving gateway URL: {}", e),
+                        Some(json!({ "details": e.to_string() })),
+                    )),
                 }
             }
             Err(SubgraphError::ApiKeyNotSet) => Err(McpError::invalid_params(
@@ -336,24 +420,36 @@ impl SubgraphServer {
     ) -> Result<CallToolResult, McpError> {
         match self.get_api_key(headers.0.as_ref()) {
             Ok(api_key) => {
-                match self
-                    .search_subgraphs_by_keyword_internal(&api_key, &keyword)
-                    .await
-                {
-                    Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
-                        "{:#}",
-                        result
-                    ))])),
-                    Err(e) => match e {
-                        SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
-                            e.to_string(),
-                            Some(json!({ "details": e.to_string() })),
-                        )),
-                        _ => Err(McpError::internal_error(
-                            format!("Unexpected error during subgraph search: {}", e),
-                            Some(json!({ "details": e.to_string()})),
-                        )),
-                    },
+                match self.get_gateway_url(headers.0.as_ref()) {
+                    Ok(gateway_url) => {
+                        match self
+                            .search_subgraphs_by_keyword_internal(&api_key, &gateway_url, &keyword)
+                            .await
+                        {
+                            Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
+                                "{:#}",
+                                result
+                            ))])),
+                            Err(e) => match e {
+                                SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
+                                    e.to_string(),
+                                    Some(json!({ "details": e.to_string() })),
+                                )),
+                                _ => Err(McpError::internal_error(
+                                    format!("Unexpected error during subgraph search: {}", e),
+                                    Some(json!({ "details": e.to_string()})),
+                                )),
+                            },
+                        }
+                    }
+                    Err(SubgraphError::InvalidGatewayId(msg)) => Err(McpError::internal_error(
+                        msg.clone(),
+                        Some(json!({ "details": msg.clone() })),
+                    )),
+                    Err(e) => Err(McpError::internal_error(
+                        format!("Error retrieving gateway URL: {}", e),
+                        Some(json!({ "details": e.to_string() })),
+                    )),
                 }
             }
             Err(SubgraphError::ApiKeyNotSet) => Err(McpError::invalid_params(
@@ -378,24 +474,36 @@ impl SubgraphServer {
     ) -> Result<CallToolResult, McpError> {
         match self.get_api_key(headers.0.as_ref()) {
             Ok(api_key) => {
-                match self
-                    .get_deployment_30day_query_counts_internal(&api_key, &ipfs_hashes)
-                    .await
-                {
-                    Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
-                        "{:#}",
-                        result
-                    ))])),
-                    Err(e) => match e {
-                         SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
-                            e.to_string(),
-                            Some(json!({ "details": e.to_string() })),
-                        )),
-                        _ => Err(McpError::internal_error(
-                            format!("Unexpected error during 30-day query count retrieval: {}",e),
-                            Some(json!({ "details": e.to_string()})),
-                        )),
-                    },
+                match self.get_gateway_url(headers.0.as_ref()) {
+                    Ok(gateway_url) => {
+                        match self
+                            .get_deployment_30day_query_counts_internal(&api_key, &gateway_url, &ipfs_hashes)
+                            .await
+                        {
+                            Ok(result) => Ok(CallToolResult::success(vec![Content::text(format!(
+                                "{:#}",
+                                result
+                            ))])),
+                            Err(e) => match e {
+                                 SubgraphError::GraphQlError(_) => Err(McpError::internal_error(
+                                    e.to_string(),
+                                    Some(json!({ "details": e.to_string() })),
+                                )),
+                                _ => Err(McpError::internal_error(
+                                    format!("Unexpected error during 30-day query count retrieval: {}",e),
+                                    Some(json!({ "details": e.to_string()})),
+                                )),
+                            },
+                        }
+                    }
+                    Err(SubgraphError::InvalidGatewayId(msg)) => Err(McpError::internal_error(
+                        msg.clone(),
+                        Some(json!({ "details": msg.clone() })),
+                    )),
+                    Err(e) => Err(McpError::internal_error(
+                        format!("Error retrieving gateway URL: {}", e),
+                        Some(json!({ "details": e.to_string() })),
+                    )),
                 }
             }
             Err(SubgraphError::ApiKeyNotSet) => Err(McpError::invalid_params(
