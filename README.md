@@ -235,6 +235,34 @@ Below is a reference for the `Subgraph Server Instructions`:
 *   Use variables for dynamic values in queries.
 ```
 
+## Monitoring
+
+The server exposes Prometheus metrics for monitoring its performance and behavior.
+
+### Metrics Endpoint
+
+When running in SSE mode, a metrics server is started on a separate port.
+
+- **Endpoint**: `/metrics`
+- **Default Port**: `9091`
+
+You can configure the port and host for the metrics server using the `METRICS_PORT` and `METRICS_HOST` environment variables.
+
+### Exposed Metrics
+
+The following application-specific metrics are exposed:
+
+- `mcp_tool_calls_total{tool_name, status}`: A counter for the number of MCP tool calls.
+  - `tool_name`: The name of the MCP tool being called (e.g., `get_schema_by_deployment_id`).
+  - `status`: The result of the call (`success` or `error`).
+- `mcp_tool_call_duration_seconds{tool_name}`: A histogram of the duration of MCP tool calls.
+- `gateway_requests_total{endpoint_type, status}`: A counter for outgoing requests to The Graph's Gateway.
+  - `endpoint_type`: The type of query or endpoint being hit (e.g., `get_schema_by_deployment_id`, `subgraphs/id`).
+  - `status`: The result of the request (`success` or `error`).
+- `gateway_request_duration_seconds{endpoint_type}`: A histogram of the duration of Gateway requests.
+
+Additionally, the `axum-prometheus` library provides standard HTTP request metrics for the metrics server itself (prefixed with `http_`).
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.

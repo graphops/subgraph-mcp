@@ -88,6 +88,8 @@ STOPSIGNAL SIGTERM
 # Distroless:nonroot automatically runs as UID 65532
 USER nonroot
 
+EXPOSE 8000 9091
+
 ENTRYPOINT ["/usr/local/bin/tini", "--", "/usr/local/bin/subgraph-mcp"]
 
 # -----------------------------------------------------------------------------

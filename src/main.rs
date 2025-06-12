@@ -2,16 +2,25 @@
 pub mod constants;
 pub mod error;
 pub mod http_utils;
+pub mod metrics;
 pub mod server;
 pub mod server_helpers;
 pub mod types;
+use crate::metrics::METRICS;
 use anyhow::Result;
+use axum::{
+    body::Body,
+    extract::State,
+    http::{header::CONTENT_TYPE, StatusCode},
+    response::{IntoResponse, Response},
+};
+use prometheus_client::{encoding::text::encode, registry::Registry};
 use rmcp::{
     transport::sse_server::{SseServer, SseServerConfig},
     ServiceExt,
 };
 pub use server::SubgraphServer;
-use std::{env, net::SocketAddr, time::Duration};
+use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::io;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -24,7 +33,32 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|e| eprintln!("env_logger init failed: {}", e));
 
     if args.iter().any(|arg| arg == "--sse") {
-        start_sse_server().await
+        let shutdown_token = CancellationToken::new();
+
+        let sse_server_handle = tokio::spawn(start_sse_server(shutdown_token.clone()));
+        let metrics_server_handle = tokio::spawn(start_metrics_server(shutdown_token.clone()));
+
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("Ctrl+C (SIGINT) received, initiating graceful shutdown...");
+            },
+            _ = sigterm.recv() => {
+                 info!("SIGTERM received, initiating graceful shutdown...");
+            }
+        };
+
+        info!("Signalling services to shut down...");
+        shutdown_token.cancel();
+
+        let _ = sse_server_handle.await?;
+        let _ = metrics_server_handle.await?;
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        info!("All services shutdown complete.");
+        Ok(())
     } else {
         start_stdio_server().await
     }
@@ -40,7 +74,7 @@ async fn start_stdio_server() -> Result<()> {
     Ok(())
 }
 
-async fn start_sse_server() -> Result<()> {
+async fn start_sse_server(shutdown_token: CancellationToken) -> Result<()> {
     info!("Starting SSE Subgraph MCP Server");
     let host = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port = env::var("PORT").unwrap_or_else(|_| "8000".to_string());
@@ -51,13 +85,11 @@ async fn start_sse_server() -> Result<()> {
     let sse_path = env::var("SSE_PATH").unwrap_or_else(|_| "/sse".to_string());
     let post_path = env::var("POST_PATH").unwrap_or_else(|_| "/messages".to_string());
 
-    let server_shutdown_token = CancellationToken::new();
-
     let config = SseServerConfig {
         bind: bind_addr,
         sse_path,
         post_path,
-        ct: server_shutdown_token.clone(),
+        ct: shutdown_token.clone(),
         sse_keep_alive: Some(Duration::from_secs(30)),
     };
 
@@ -67,23 +99,59 @@ async fn start_sse_server() -> Result<()> {
     let service_shutdown_token = sse_server.with_service(SubgraphServer::new);
     info!("Subgraph MCP Service attached to SSE server");
 
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    shutdown_token.cancelled().await;
 
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            info!("Ctrl+C (SIGINT) received, initiating graceful shutdown...");
-        },
-        _ = sigterm.recv() => {
-             info!("SIGTERM received, initiating graceful shutdown...");
-        }
-    };
-
-    info!("Signalling service and server to shut down...");
+    info!("SSE Server shutdown signal received. Giving tasks a moment to finish...");
     service_shutdown_token.cancel();
-    server_shutdown_token.cancel();
-
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     info!("SSE Server shutdown complete.");
+    Ok(())
+}
+
+async fn metrics_handler(State(registry): State<Arc<Registry>>) -> impl IntoResponse {
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut buffer = String::new();
+    encode(&mut buffer, &registry).unwrap();
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            CONTENT_TYPE,
+            "application/openmetrics-text; version=1.0.0; charset=utf-8",
+        )
+        .body(Body::from(buffer))
+        .unwrap()
+}
+
+async fn start_metrics_server(shutdown_token: CancellationToken) -> Result<()> {
+    let mut registry = <Registry as Default>::default();
+    METRICS.register(&mut registry);
+    let registry = Arc::new(registry);
+
+    let host = env::var("METRICS_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let port = env::var("METRICS_PORT").unwrap_or_else(|_| "9091".to_string());
+    let bind_addr: SocketAddr = format!("{}:{}", host, port).parse().map_err(|e| {
+        anyhow::anyhow!(
+            "Invalid METRICS BIND address format '{}:{}': {}",
+            host,
+            port,
+            e
+        )
+    })?;
+
+    let app = axum::Router::new()
+        .route("/metrics", axum::routing::get(metrics_handler))
+        .with_state(registry);
+
+    info!("Metrics server listening on {}", bind_addr);
+    let listener = tokio::net::TcpListener::bind(bind_addr).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            shutdown_token.cancelled().await;
+            info!("Metrics server shutting down.");
+        })
+        .await?;
+
     Ok(())
 }
