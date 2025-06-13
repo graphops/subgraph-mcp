@@ -98,7 +98,7 @@ impl SubgraphServer {
         deployment_id: &str,
     ) -> Result<String, SubgraphError> {
         METRICS
-            .observe_gateway_request("network_subgraph_query", || async {
+            .observe_gateway_request("network_subgraph_query", api_key, || async {
                 let url = self.get_network_subgraph_query_url(api_key, gateway_url);
 
                 let query = r#"
@@ -163,7 +163,7 @@ impl SubgraphServer {
         subgraph_id: &str,
     ) -> Result<String, SubgraphError> {
         METRICS
-            .observe_gateway_request("network_subgraph_query", || async {
+            .observe_gateway_request("network_subgraph_query", api_key, || async {
                 let url = self.get_network_subgraph_query_url(api_key, gateway_url);
 
                 let query = r#"
@@ -230,7 +230,7 @@ impl SubgraphServer {
         ipfs_hash: &str,
     ) -> Result<String, SubgraphError> {
         METRICS
-            .observe_gateway_request("network_subgraph_query", || async {
+            .observe_gateway_request("network_subgraph_query", api_key, || async {
                 let url = self.get_network_subgraph_query_url(api_key, gateway_url);
 
                 let query = r#"
@@ -295,7 +295,7 @@ impl SubgraphServer {
         variables: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, SubgraphError> {
         METRICS
-            .observe_gateway_request(endpoint_type, || async {
+            .observe_gateway_request(endpoint_type, api_key, || async {
                 let url = format!("{}/{}/{}/{}", gateway_url, api_key, endpoint_type, id);
 
                 let mut request_body = serde_json::json!({
@@ -343,7 +343,7 @@ impl SubgraphServer {
         chain: &str,
     ) -> Result<serde_json::Value, SubgraphError> {
         METRICS
-            .observe_gateway_request("network_subgraph_query", || async {
+            .observe_gateway_request("network_subgraph_query", api_key, || async {
                 let url = self.get_network_subgraph_query_url(api_key, gateway_url);
 
                 let query = r#"
@@ -404,7 +404,7 @@ impl SubgraphServer {
         keyword: &str,
     ) -> Result<serde_json::Value, SubgraphError> {
         METRICS
-            .observe_gateway_request("network_subgraph_query", || async {
+            .observe_gateway_request("network_subgraph_query", api_key, || async {
                 let url = self.get_network_subgraph_query_url(api_key, gateway_url);
 
                 let query = r#"
@@ -483,7 +483,7 @@ impl SubgraphServer {
         ipfs_hashes: &[String],
     ) -> Result<serde_json::Value, SubgraphError> {
         METRICS
-            .observe_gateway_request("qos_oracle_query", || async {
+            .observe_gateway_request("qos_oracle_query", api_key, || async {
                 let url = format!(
                     "{}/{}/deployments/id/{}",
                     gateway_url, api_key, GATEWAY_QOS_ORACLE

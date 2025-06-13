@@ -14,22 +14,26 @@ const DEFAULT_BUCKETS: [f64; 11] = [
 pub struct ToolCallLabels {
     pub tool_name: String,
     pub status: String,
+    pub api_key: String,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug, EncodeLabelSet)]
 pub struct ToolCallDurationLabels {
     pub tool_name: String,
+    pub api_key: String,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug, EncodeLabelSet)]
 pub struct GatewayRequestLabels {
     pub endpoint_type: String,
     pub status: String,
+    pub api_key: String,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug, EncodeLabelSet)]
 pub struct GatewayRequestDurationLabels {
     pub endpoint_type: String,
+    pub api_key: String,
 }
 
 #[derive(Clone)]
@@ -58,31 +62,31 @@ impl Metrics {
 
     pub fn register(&self, registry: &mut Registry) {
         registry.register(
-            "mcp_tool_calls",
+            "subgraph_mcp_tool_calls",
             "Total number of MCP tool calls",
             self.mcp_tool_calls_total.clone(),
         );
 
         registry.register(
-            "mcp_tool_call_duration_seconds",
+            "subgraph_mcp_tool_call_duration_seconds",
             "Duration of MCP tool calls in seconds",
             self.mcp_tool_call_duration_seconds.clone(),
         );
 
         registry.register(
-            "gateway_requests",
+            "subgraph_mcp_gateway_requests",
             "Total number of requests to the Graph Gateway",
             self.gateway_requests_total.clone(),
         );
 
         registry.register(
-            "gateway_request_duration_seconds",
+            "subgraph_mcp_gateway_request_duration_seconds",
             "Duration of Graph Gateway requests in seconds",
             self.gateway_request_duration_seconds.clone(),
         );
     }
 
-    pub async fn observe_tool_call<F, Fut, T>(&self, tool_name: &str, f: F) -> T
+    pub async fn observe_tool_call<F, Fut, T>(&self, tool_name: &str, api_key: &str, f: F) -> T
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = T>,
@@ -102,19 +106,26 @@ impl Metrics {
             .get_or_create(&ToolCallLabels {
                 tool_name: tool_name.to_string(),
                 status: status.to_string(),
+                api_key: api_key.to_string(),
             })
             .inc();
 
         self.mcp_tool_call_duration_seconds
             .get_or_create(&ToolCallDurationLabels {
                 tool_name: tool_name.to_string(),
+                api_key: api_key.to_string(),
             })
             .observe(duration.as_secs_f64());
 
         result
     }
 
-    pub async fn observe_gateway_request<F, Fut, T>(&self, endpoint_type: &str, f: F) -> T
+    pub async fn observe_gateway_request<F, Fut, T>(
+        &self,
+        endpoint_type: &str,
+        api_key: &str,
+        f: F,
+    ) -> T
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = T>,
@@ -134,12 +145,14 @@ impl Metrics {
             .get_or_create(&GatewayRequestLabels {
                 endpoint_type: endpoint_type.to_string(),
                 status: status.to_string(),
+                api_key: api_key.to_string(),
             })
             .inc();
 
         self.gateway_request_duration_seconds
             .get_or_create(&GatewayRequestDurationLabels {
                 endpoint_type: endpoint_type.to_string(),
+                api_key: api_key.to_string(),
             })
             .observe(duration.as_secs_f64());
 
