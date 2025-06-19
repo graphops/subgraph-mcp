@@ -15,7 +15,7 @@ thiserror = "2.0.12"
 log = "0.4"
 env_logger = "0.11.8"
 futures = "0.3"
-rmcp = { git = "https://github.com/sahra-karakoc/rust-sdk.git", branch = "sahra/extract-headers", features = [
+rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", features = [
     "macros",
     "transport-sse-server",
 ] }

@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::metrics::METRICS;
-use crate::{
-    constants::SUBGRAPH_SERVER_INSTRUCTIONS, error::SubgraphError, http_utils::HttpRequestHeaders,
-    types::*,
-};
+use crate::{constants::SUBGRAPH_SERVER_INSTRUCTIONS, error::SubgraphError, types::*};
 use reqwest::Client;
 use rmcp::{model::*, service::RequestContext, tool, Error as McpError, RoleServer, ServerHandler};
 use serde_json::json;
@@ -33,11 +30,11 @@ impl SubgraphServer {
     )]
     pub async fn get_schema_by_deployment_id(
         &self,
-        headers: HttpRequestHeaders,
+        extensions: Extensions,
         #[tool(aggr)]
         GetSchemaByDeploymentIdRequest { deployment_id }: GetSchemaByDeploymentIdRequest,
     ) -> Result<CallToolResult, McpError> {
-        let api_key = match self.get_api_key(headers.0.as_ref()) {
+        let api_key = match self.get_api_key(&extensions) {
             Ok(key) => key,
             Err(SubgraphError::ApiKeyNotSet) => return Err(McpError::invalid_params(
                 "Configuration error: API key not found. Please set the GATEWAY_API_KEY environment variable or provide a Bearer token in the Authorization header.",
@@ -45,7 +42,7 @@ impl SubgraphServer {
             )),
             Err(e) => return Err(McpError::internal_error(format!("Error retrieving API key: {}", e), Some(json!({ "details": e.to_string() }))))
         };
-        let gateway_url = match self.get_gateway_url(headers.0.as_ref()) {
+        let gateway_url = match self.get_gateway_url(&extensions) {
             Ok(url) => url,
             Err(SubgraphError::InvalidGatewayId(msg)) => {
                 return Err(McpError::internal_error(
@@ -88,10 +85,10 @@ impl SubgraphServer {
     )]
     pub async fn get_schema_by_subgraph_id(
         &self,
-        headers: HttpRequestHeaders,
+        extensions: Extensions,
         #[tool(aggr)] GetSchemaBySubgraphIdRequest { subgraph_id }: GetSchemaBySubgraphIdRequest,
     ) -> Result<CallToolResult, McpError> {
-        let api_key = match self.get_api_key(headers.0.as_ref()) {
+        let api_key = match self.get_api_key(&extensions) {
             Ok(key) => key,
             Err(SubgraphError::ApiKeyNotSet) => return Err(McpError::invalid_params(
                 "Configuration error: API key not found. Please set the GATEWAY_API_KEY environment variable or provide a Bearer token in the Authorization header.",
@@ -99,7 +96,7 @@ impl SubgraphServer {
             )),
             Err(e) => return Err(McpError::internal_error(format!("Error retrieving API key: {}", e), Some(json!({ "details": e.to_string() }))))
         };
-        let gateway_url = match self.get_gateway_url(headers.0.as_ref()) {
+        let gateway_url = match self.get_gateway_url(&extensions) {
             Ok(url) => url,
             Err(SubgraphError::InvalidGatewayId(msg)) => {
                 return Err(McpError::internal_error(
@@ -147,10 +144,10 @@ impl SubgraphServer {
     )]
     pub async fn get_schema_by_ipfs_hash(
         &self,
-        headers: HttpRequestHeaders,
+        extensions: Extensions,
         #[tool(aggr)] GetSchemaByIpfsHashRequest { ipfs_hash }: GetSchemaByIpfsHashRequest,
     ) -> Result<CallToolResult, McpError> {
-        let api_key = match self.get_api_key(headers.0.as_ref()) {
+        let api_key = match self.get_api_key(&extensions) {
             Ok(key) => key,
             Err(SubgraphError::ApiKeyNotSet) => return Err(McpError::invalid_params(
                 "Configuration error: API key not found. Please set the GATEWAY_API_KEY environment variable or provide a Bearer token in the Authorization header.",
@@ -158,7 +155,7 @@ impl SubgraphServer {
             )),
             Err(e) => return Err(McpError::internal_error(format!("Error retrieving API key: {}", e), Some(json!({ "details": e.to_string() }))))
         };
-        let gateway_url = match self.get_gateway_url(headers.0.as_ref()) {
+        let gateway_url = match self.get_gateway_url(&extensions) {
             Ok(url) => url,
             Err(SubgraphError::InvalidGatewayId(msg)) => {
                 return Err(McpError::internal_error(
@@ -202,14 +199,14 @@ impl SubgraphServer {
     #[tool(description = "Execute a GraphQL query against a specific deployment ID.")]
     pub async fn execute_query_by_deployment_id(
         &self,
-        headers: HttpRequestHeaders,
+        extensions: Extensions,
         #[tool(aggr)] ExecuteQueryByDeploymentIdRequest {
             deployment_id,
             query,
             variables,
         }: ExecuteQueryByDeploymentIdRequest,
     ) -> Result<CallToolResult, McpError> {
-        let api_key = match self.get_api_key(headers.0.as_ref()) {
+        let api_key = match self.get_api_key(&extensions) {
             Ok(key) => key,
             Err(SubgraphError::ApiKeyNotSet) => return Err(McpError::invalid_params(
                 "Configuration error: API key not found. Please set the GATEWAY_API_KEY environment variable or provide a Bearer token in the Authorization header.",
@@ -217,7 +214,7 @@ impl SubgraphServer {
             )),
             Err(e) => return Err(McpError::internal_error(format!("Error retrieving API key: {}", e), Some(json!({ "details": e.to_string() }))))
         };
-        let gateway_url = match self.get_gateway_url(headers.0.as_ref()) {
+        let gateway_url = match self.get_gateway_url(&extensions) {
             Ok(url) => url,
             Err(SubgraphError::InvalidGatewayId(msg)) => {
                 return Err(McpError::internal_error(
@@ -271,14 +268,14 @@ impl SubgraphServer {
     #[tool(description = "Execute a GraphQL query against a specific IPFS hash.")]
     pub async fn execute_query_by_ipfs_hash(
         &self,
-        headers: HttpRequestHeaders,
+        extensions: Extensions,
         #[tool(aggr)] ExecuteQueryByIpfsHashRequest {
             ipfs_hash,
             query,
             variables,
         }: ExecuteQueryByIpfsHashRequest,
     ) -> Result<CallToolResult, McpError> {
-        let api_key = match self.get_api_key(headers.0.as_ref()) {
+        let api_key = match self.get_api_key(&extensions) {
             Ok(key) => key,
             Err(SubgraphError::ApiKeyNotSet) => return Err(McpError::invalid_params(
                 "Configuration error: API key not found. Please set the GATEWAY_API_KEY environment variable or provide a Bearer token in the Authorization header.",
@@ -286,7 +283,7 @@ impl SubgraphServer {
             )),
             Err(e) => return Err(McpError::internal_error(format!("Error retrieving API key: {}", e), Some(json!({ "details": e.to_string() }))))
         };
-        let gateway_url = match self.get_gateway_url(headers.0.as_ref()) {
+        let gateway_url = match self.get_gateway_url(&extensions) {
             Ok(url) => url,
             Err(SubgraphError::InvalidGatewayId(msg)) => {
                 return Err(McpError::internal_error(
@@ -340,14 +337,14 @@ impl SubgraphServer {
     #[tool(description = "Execute a GraphQL query against the latest deployment of a subgraph ID.")]
     pub async fn execute_query_by_subgraph_id(
         &self,
-        headers: HttpRequestHeaders,
+        extensions: Extensions,
         #[tool(aggr)] ExecuteQueryBySubgraphIdRequest {
             subgraph_id,
             query,
             variables,
         }: ExecuteQueryBySubgraphIdRequest,
     ) -> Result<CallToolResult, McpError> {
-        let api_key = match self.get_api_key(headers.0.as_ref()) {
+        let api_key = match self.get_api_key(&extensions) {
             Ok(key) => key,
             Err(SubgraphError::ApiKeyNotSet) => return Err(McpError::invalid_params(
                 "Configuration error: API key not found. Please set the GATEWAY_API_KEY environment variable or provide a Bearer token in the Authorization header.",
@@ -355,7 +352,7 @@ impl SubgraphServer {
             )),
             Err(e) => return Err(McpError::internal_error(format!("Error retrieving API key: {}", e), Some(json!({ "details": e.to_string() }))))
         };
-        let gateway_url = match self.get_gateway_url(headers.0.as_ref()) {
+        let gateway_url = match self.get_gateway_url(&extensions) {
             Ok(url) => url,
             Err(SubgraphError::InvalidGatewayId(msg)) => {
                 return Err(McpError::internal_error(
@@ -411,13 +408,13 @@ impl SubgraphServer {
     )]
     pub async fn get_top_subgraph_deployments(
         &self,
-        headers: HttpRequestHeaders,
+        extensions: Extensions,
         #[tool(aggr)] GetTopSubgraphDeploymentsRequest {
             contract_address,
             chain,
         }: GetTopSubgraphDeploymentsRequest,
     ) -> Result<CallToolResult, McpError> {
-        let api_key = match self.get_api_key(headers.0.as_ref()) {
+        let api_key = match self.get_api_key(&extensions) {
             Ok(key) => key,
             Err(SubgraphError::ApiKeyNotSet) => return Err(McpError::invalid_params(
                 "Configuration error: API key not found. Please set the GATEWAY_API_KEY environment variable or provide a Bearer token in the Authorization header.",
@@ -425,7 +422,7 @@ impl SubgraphServer {
             )),
             Err(e) => return Err(McpError::internal_error(format!("Error retrieving API key: {}", e), Some(json!({ "details": e.to_string() }))))
         };
-        let gateway_url = match self.get_gateway_url(headers.0.as_ref()) {
+        let gateway_url = match self.get_gateway_url(&extensions) {
             Ok(url) => url,
             Err(SubgraphError::InvalidGatewayId(msg)) => {
                 return Err(McpError::internal_error(
@@ -479,10 +476,10 @@ impl SubgraphServer {
     )]
     pub async fn search_subgraphs_by_keyword(
         &self,
-        headers: HttpRequestHeaders,
+        extensions: Extensions,
         #[tool(aggr)] SearchSubgraphsByKeywordRequest { keyword }: SearchSubgraphsByKeywordRequest,
     ) -> Result<CallToolResult, McpError> {
-        let api_key = match self.get_api_key(headers.0.as_ref()) {
+        let api_key = match self.get_api_key(&extensions) {
             Ok(key) => key,
             Err(SubgraphError::ApiKeyNotSet) => return Err(McpError::invalid_params(
                 "Configuration error: API key not found. Please set the GATEWAY_API_KEY environment variable or provide a Bearer token in the Authorization header.",
@@ -490,7 +487,7 @@ impl SubgraphServer {
             )),
             Err(e) => return Err(McpError::internal_error(format!("Error retrieving API key: {}", e), Some(json!({ "details": e.to_string() }))))
         };
-        let gateway_url = match self.get_gateway_url(headers.0.as_ref()) {
+        let gateway_url = match self.get_gateway_url(&extensions) {
             Ok(url) => url,
             Err(SubgraphError::InvalidGatewayId(msg)) => {
                 return Err(McpError::internal_error(
@@ -536,11 +533,11 @@ impl SubgraphServer {
     )]
     pub async fn get_deployment_30day_query_counts(
         &self,
-        headers: HttpRequestHeaders,
+        extensions: Extensions,
         #[tool(aggr)]
         GetDeployment30DayQueryCountsRequest { ipfs_hashes }: GetDeployment30DayQueryCountsRequest,
     ) -> Result<CallToolResult, McpError> {
-        let api_key = match self.get_api_key(headers.0.as_ref()) {
+        let api_key = match self.get_api_key(&extensions) {
             Ok(key) => key,
             Err(SubgraphError::ApiKeyNotSet) => return Err(McpError::invalid_params(
                 "Configuration error: API key not found. Please set the GATEWAY_API_KEY environment variable or provide a Bearer token in the Authorization header.",
@@ -548,7 +545,7 @@ impl SubgraphServer {
             )),
             Err(e) => return Err(McpError::internal_error(format!("Error retrieving API key: {}", e), Some(json!({ "details": e.to_string() }))))
         };
-        let gateway_url = match self.get_gateway_url(headers.0.as_ref()) {
+        let gateway_url = match self.get_gateway_url(&extensions) {
             Ok(url) => url,
             Err(SubgraphError::InvalidGatewayId(msg)) => {
                 return Err(McpError::internal_error(

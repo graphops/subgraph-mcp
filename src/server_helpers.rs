@@ -6,8 +6,9 @@ use crate::error::SubgraphError;
 use crate::metrics::METRICS;
 use crate::server::SubgraphServer;
 use crate::types::*;
-use http::HeaderMap;
-use rmcp::model::{AnnotateAble, RawResource, Resource};
+use axum::http::request::Parts;
+use http;
+use rmcp::model::{AnnotateAble, Extensions, RawResource, Resource};
 use serde_json::json;
 use std::{
     env,
@@ -15,31 +16,27 @@ use std::{
 };
 
 impl SubgraphServer {
-    pub(crate) fn get_api_key(
-        &self,
-        headers_opt: Option<&HeaderMap>,
-    ) -> Result<String, SubgraphError> {
-        if let Some(actual_headers) = headers_opt {
+    pub(crate) fn get_api_key(&self, extensions: &Extensions) -> Result<String, SubgraphError> {
+        if let Some(parts) = extensions.get::<Parts>() {
+            let actual_headers = &parts.headers;
+
             if let Some(auth_header_value) = actual_headers.get(http::header::AUTHORIZATION) {
                 if let Ok(auth_str) = auth_header_value.to_str() {
                     if let Some(token_part) = auth_str.strip_prefix("Bearer ") {
                         if !token_part.is_empty() {
-                            tracing::info!(target: "mcp_tool_auth", "Using API key from Authorization header.");
                             return Ok(token_part.to_string());
                         }
                     }
                 }
             }
         }
-        tracing::info!(target: "mcp_tool_auth", "Using API key from GATEWAY_API_KEY environment variable.");
+
         env::var("GATEWAY_API_KEY").map_err(|_| SubgraphError::ApiKeyNotSet)
     }
 
-    pub(crate) fn get_gateway_url(
-        &self,
-        headers_opt: Option<&HeaderMap>,
-    ) -> Result<String, SubgraphError> {
-        if let Some(actual_headers) = headers_opt {
+    pub(crate) fn get_gateway_url(&self, extensions: &Extensions) -> Result<String, SubgraphError> {
+        if let Some(parts) = extensions.get::<Parts>() {
+            let actual_headers = &parts.headers;
             if let Some(gateway_id_header) = actual_headers.get("x-gateway-id") {
                 if let Ok(gateway_id) = gateway_id_header.to_str() {
                     if !gateway_id.is_empty() {
