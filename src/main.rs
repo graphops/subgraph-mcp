@@ -95,7 +95,7 @@ async fn start_sse_server(shutdown_token: CancellationToken) -> Result<()> {
     let sse_server = SseServer::serve_with_config(config).await?;
     info!("SSE Server listening on {}", sse_server.config.bind);
 
-    let service_shutdown_token = sse_server.with_service(SubgraphServer::new);
+    let service_shutdown_token = sse_server.with_service_directly(SubgraphServer::new);
     info!("Subgraph MCP Service attached to SSE server");
 
     shutdown_token.cancelled().await;
