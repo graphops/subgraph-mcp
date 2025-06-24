@@ -110,25 +110,19 @@ For example, if `pwd` outputs `/Users/user/subgraph-mcp`, the full command path 
 
 After adding the configuration, restart Claude Desktop.
 
-**Important**: Claude Desktop may not automatically utilize server resources. To ensure proper functionality, manually add `Subgraph Server Instructions` resource to your chat context by clicking on the context menu and adding the resource.
-
-## Configuration Options
-
-### Request Timeout Configuration
-
-**Note: This configuration only applies when running your own local server instance (Option 2: "Building and Running the Server Locally"). If you're using the remote hosted service (Option 1), timeout settings are managed by the hosted service and cannot be customized.**
+#### Request Timeout Configuration (for Local Execution)
 
 The server includes configurable timeout settings for HTTP requests to The Graph's Gateway. This helps handle complex GraphQL queries that may take longer to execute.
 
-#### Default Behavior
+**Default Behavior**
 
 By default, the server uses a **120-second timeout** for all HTTP requests to The Graph's Gateway. This provides a good balance between allowing complex queries to complete while preventing indefinite hangs.
 
-#### Custom Timeout Configuration
+**Custom Timeout Configuration**
 
 You can customize the timeout in several ways:
 
-**Option 1: Environment Variable (Recommended)**
+Option 1: Environment Variable (Recommended)
 
 Set the `SUBGRAPH_REQUEST_TIMEOUT_SECONDS` environment variable:
 
@@ -152,7 +146,7 @@ For Claude Desktop configuration:
 }
 ```
 
-**Option 2: Programmatic Configuration (for developers)**
+Option 2: Programmatic Configuration (for developers)
 
 When building applications with the server library:
 
@@ -168,6 +162,8 @@ let server = SubgraphServer::with_timeout(Duration::from_secs(300));
 ```
 
 **Note**: Very long timeouts (>5 minutes) should be used cautiously as they may impact overall application responsiveness.
+
+**Important**: Claude Desktop may not automatically utilize server resources. To ensure proper functionality, manually add `Subgraph Server Instructions` resource to your chat context by clicking on the context menu and adding the resource.
 
 ## Available Tools
 
