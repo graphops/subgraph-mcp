@@ -116,6 +116,8 @@ After adding the configuration, restart Claude Desktop.
 
 ### Request Timeout Configuration
 
+**Note: This configuration only applies when running your own local server instance (Option 2: "Building and Running the Server Locally"). If you're using the remote hosted service (Option 1), timeout settings are managed by the hosted service and cannot be customized.**
+
 The server includes configurable timeout settings for HTTP requests to The Graph's Gateway. This helps handle complex GraphQL queries that may take longer to execute.
 
 #### Default Behavior
@@ -165,14 +167,7 @@ let server = SubgraphServer::new();
 let server = SubgraphServer::with_timeout(Duration::from_secs(300));
 ```
 
-#### Timeout Recommendations
-
-- **Development/Testing**: 60-120 seconds (default)
-- **Production with simple queries**: 120-180 seconds  
-- **Production with complex analytics**: 300-600 seconds
-- **Heavy data processing**: 600+ seconds
-
-**Note**: Very long timeouts (>10 minutes) should be used cautiously as they may impact overall application responsiveness.
+**Note**: Very long timeouts (>5 minutes) should be used cautiously as they may impact overall application responsiveness.
 
 ## Available Tools
 
@@ -333,16 +328,24 @@ If you encounter "Request timed out" or "MCP error -32001" errors, this typicall
 
 **Solutions:**
 
+**If you're running your own local server instance:**
+
 1. **Increase the timeout** using the `SUBGRAPH_REQUEST_TIMEOUT_SECONDS` environment variable:
    ```bash
    export SUBGRAPH_REQUEST_TIMEOUT_SECONDS=300  # 5 minutes
    ```
 
+**If you're using the remote hosted service:**
+
+1. **Contact support** - Timeout settings are managed by the hosted service and cannot be customized by end users.
+
+**For all users:**
+
 2. **Check query complexity** - Very complex queries with large result sets may need longer timeouts or query optimization.
 
 3. **Verify The Graph Gateway status** - Occasional timeout issues may be due to temporary Gateway performance issues.
 
-**Default Timeout**: The server uses a 120-second timeout by default (increased from 30 seconds in earlier versions).
+**Default Timeout**: Local server instances use a 120-second timeout by default (increased from 30 seconds in earlier versions). Remote hosted service timeout settings may differ.
 
 ### Common Issues
 
