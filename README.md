@@ -112,6 +112,68 @@ After adding the configuration, restart Claude Desktop.
 
 **Important**: Claude Desktop may not automatically utilize server resources. To ensure proper functionality, manually add `Subgraph Server Instructions` resource to your chat context by clicking on the context menu and adding the resource.
 
+## Configuration Options
+
+### Request Timeout Configuration
+
+The server includes configurable timeout settings for HTTP requests to The Graph's Gateway. This helps handle complex GraphQL queries that may take longer to execute.
+
+#### Default Behavior
+
+By default, the server uses a **120-second timeout** for all HTTP requests to The Graph's Gateway. This provides a good balance between allowing complex queries to complete while preventing indefinite hangs.
+
+#### Custom Timeout Configuration
+
+You can customize the timeout in several ways:
+
+**Option 1: Environment Variable (Recommended)**
+
+Set the `SUBGRAPH_REQUEST_TIMEOUT_SECONDS` environment variable:
+
+```bash
+export SUBGRAPH_REQUEST_TIMEOUT_SECONDS=300  # 5 minutes
+```
+
+For Claude Desktop configuration:
+
+```json
+{
+  "mcpServers": {
+    "subgraph-mcp": {
+      "command": "/path/to/subgraph-mcp",
+      "env": {
+        "GATEWAY_API_KEY": "YOUR_GATEWAY_API_KEY",
+        "SUBGRAPH_REQUEST_TIMEOUT_SECONDS": "300"
+      }
+    }
+  }
+}
+```
+
+**Option 2: Programmatic Configuration (for developers)**
+
+When building applications with the server library:
+
+```rust
+use std::time::Duration;
+use subgraph_mcp::SubgraphServer;
+
+// Use default timeout (120 seconds)
+let server = SubgraphServer::new();
+
+// Use custom timeout
+let server = SubgraphServer::with_timeout(Duration::from_secs(300));
+```
+
+#### Timeout Recommendations
+
+- **Development/Testing**: 60-120 seconds (default)
+- **Production with simple queries**: 120-180 seconds  
+- **Production with complex analytics**: 300-600 seconds
+- **Heavy data processing**: 600+ seconds
+
+**Note**: Very long timeouts (>10 minutes) should be used cautiously as they may impact overall application responsiveness.
+
 ## Available Tools
 
 The server exposes the following tools:
@@ -262,6 +324,31 @@ The following application-specific metrics are exposed:
 - `gateway_request_duration_seconds{endpoint_type}`: A histogram of the duration of Gateway requests.
 
 Additionally, the `axum-prometheus` library provides standard HTTP request metrics for the metrics server itself (prefixed with `http_`).
+
+## Troubleshooting
+
+### Request Timeout Errors
+
+If you encounter "Request timed out" or "MCP error -32001" errors, this typically indicates that GraphQL queries are taking longer than the configured timeout to complete.
+
+**Solutions:**
+
+1. **Increase the timeout** using the `SUBGRAPH_REQUEST_TIMEOUT_SECONDS` environment variable:
+   ```bash
+   export SUBGRAPH_REQUEST_TIMEOUT_SECONDS=300  # 5 minutes
+   ```
+
+2. **Check query complexity** - Very complex queries with large result sets may need longer timeouts or query optimization.
+
+3. **Verify The Graph Gateway status** - Occasional timeout issues may be due to temporary Gateway performance issues.
+
+**Default Timeout**: The server uses a 120-second timeout by default (increased from 30 seconds in earlier versions).
+
+### Common Issues
+
+- **"API key not found"**: Ensure your `GATEWAY_API_KEY` environment variable is set correctly
+- **"Configuration error"**: Check that your Gateway API key is valid and has appropriate permissions
+- **Connection refused**: Verify the server is running and accessible on the configured port
 
 ## Contributing
 
