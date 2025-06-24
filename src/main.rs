@@ -13,6 +13,7 @@ use axum::{
     http::{header::CONTENT_TYPE, StatusCode},
     response::{IntoResponse, Response},
 };
+use clap::Parser;
 use prometheus_client::{encoding::text::encode, registry::Registry};
 use rmcp::{
     transport::sse_server::{SseServer, SseServerConfig},
@@ -24,14 +25,32 @@ use tokio::io;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    /// Start the server in SSE mode
+    #[arg(long)]
+    sse: bool,
+
+    /// Initialize a default configuration file
+    #[arg(long, short)]
+    init_config: bool,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
+    let cli = Cli::parse();
+
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .try_init()
         .unwrap_or_else(|e| eprintln!("env_logger init failed: {}", e));
 
-    if args.iter().any(|arg| arg == "--sse") {
+    if cli.init_config {
+        println!("Configuration initialization logic goes here.");
+        return Ok(());
+    }
+
+    if cli.sse {
         let shutdown_token = CancellationToken::new();
 
         let sse_server_handle = tokio::spawn(start_sse_server(shutdown_token.clone()));
