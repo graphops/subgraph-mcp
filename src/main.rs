@@ -109,10 +109,14 @@ async fn start_sse_server(shutdown_token: CancellationToken) -> Result<()> {
 }
 
 async fn metrics_handler(State(registry): State<Arc<Registry>>) -> impl IntoResponse {
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
     let mut buffer = String::new();
-    encode(&mut buffer, &registry).unwrap();
+    if let Err(e) = encode(&mut buffer, &registry) {
+        return Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(Body::from(format!("Failed to encode metrics: {}", e)))
+            .unwrap();
+    }
+
     Response::builder()
         .status(StatusCode::OK)
         .header(
