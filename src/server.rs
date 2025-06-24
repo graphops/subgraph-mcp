@@ -4,8 +4,12 @@ use crate::{constants::SUBGRAPH_SERVER_INSTRUCTIONS, error::SubgraphError, types
 use reqwest::Client;
 use rmcp::{model::*, service::RequestContext, tool, Error as McpError, RoleServer, ServerHandler};
 use serde_json::json;
+use std::time::Duration;
 #[derive(Clone)]
 pub struct SubgraphServer {
+    #[cfg(test)]
+    pub http_client: Client,
+    #[cfg(not(test))]
     pub(crate) http_client: Client,
 }
 
@@ -17,9 +21,28 @@ impl Default for SubgraphServer {
 
 impl SubgraphServer {
     pub fn new() -> Self {
+        let timeout_seconds = std::env::var("SUBGRAPH_REQUEST_TIMEOUT_SECONDS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(120); // Default to 120 seconds instead of 30
+
+        Self::with_timeout(Duration::from_secs(timeout_seconds))
+    }
+
+    pub fn with_timeout(timeout: Duration) -> Self {
+        let client = Client::builder()
+            .timeout(timeout)
+            .build()
+            .expect("Failed to build HTTP client");
+
         SubgraphServer {
-            http_client: Client::new(),
+            http_client: client,
         }
+    }
+
+    #[cfg(test)]
+    pub fn get_http_client(&self) -> &Client {
+        &self.http_client
     }
 }
 
